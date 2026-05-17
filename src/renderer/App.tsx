@@ -29,6 +29,7 @@ import { DESIGN_CATEGORIES } from "../shared/categories";
 import { getOrderStatusOption, ORDER_STATUS_OPTIONS, type OrderStatus } from "../shared/statuses";
 import { validateOrderInput, type OrderFormErrors } from "../shared/validation";
 import type { ArchivedFile, OrderDetail, OrderFile, OrderInput, OrderSummary } from "../shared/types";
+import welcomeKittenUrl from "./assets/welcome-kitten.png";
 
 interface OrderFormState {
   workOrderNo: string;
@@ -152,10 +153,22 @@ export default function App() {
   const [isQrUploading, setQrUploading] = useState(false);
   const [isDragging, setDragging] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [isIntroVisible, setIntroVisible] = useState(true);
+  const [isIntroClosing, setIntroClosing] = useState(false);
 
   useEffect(() => {
     void refreshOrders();
     void refreshTrashedOrders();
+  }, []);
+
+  useEffect(() => {
+    const closeTimer = window.setTimeout(() => setIntroClosing(true), 3200);
+    const removeTimer = window.setTimeout(() => setIntroVisible(false), 4100);
+
+    return () => {
+      window.clearTimeout(closeTimer);
+      window.clearTimeout(removeTimer);
+    };
   }, []);
 
   useEffect(() => {
@@ -712,7 +725,8 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell">
+    <>
+      <div className={`app-shell ${isIntroVisible ? "app-shell-opening" : ""}`}>
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">设</div>
@@ -1083,7 +1097,33 @@ export default function App() {
         </div>
       ) : null}
 
-      {toast ? <div className="toast">{toast}</div> : null}
+        {toast ? <div className="toast">{toast}</div> : null}
+      </div>
+
+      {isIntroVisible ? <WelcomeIntro isClosing={isIntroClosing} /> : null}
+    </>
+  );
+}
+
+function WelcomeIntro({ isClosing }: { isClosing: boolean }) {
+  return (
+    <div className={`welcome-intro ${isClosing ? "closing" : ""}`} role="status" aria-label="欢迎使用">
+      <div className="welcome-rays" aria-hidden="true" />
+      <div className="welcome-stage">
+        <div className="welcome-letters" aria-hidden="true">
+          <span className="welcome-letter letter-one">欢</span>
+          <span className="welcome-letter letter-two">迎</span>
+          <span className="welcome-letter letter-three">使</span>
+          <span className="welcome-letter letter-four">用</span>
+        </div>
+
+        <div className="kitten-pop">
+          <img className="welcome-kitten-image" src={welcomeKittenUrl} alt="" aria-hidden="true" />
+        </div>
+
+        <div className="welcome-shadow" aria-hidden="true" />
+        <div className="welcome-caption">欢迎使用</div>
+      </div>
     </div>
   );
 }
