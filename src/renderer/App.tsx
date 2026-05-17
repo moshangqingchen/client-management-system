@@ -162,8 +162,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const closeTimer = window.setTimeout(() => setIntroClosing(true), 3200);
-    const removeTimer = window.setTimeout(() => setIntroVisible(false), 4100);
+    const closeTimer = window.setTimeout(() => setIntroClosing(true), 1750);
+    const removeTimer = window.setTimeout(() => setIntroVisible(false), 2300);
 
     return () => {
       window.clearTimeout(closeTimer);
