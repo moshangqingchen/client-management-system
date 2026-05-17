@@ -12,12 +12,15 @@ import type {
 
 const api = {
   listOrders: () => ipcRenderer.invoke("orders:list") as Promise<OrderSummary[]>,
+  listTrashedOrders: () => ipcRenderer.invoke("orders:list-trashed") as Promise<OrderSummary[]>,
   getOrder: (orderId: string) => ipcRenderer.invoke("orders:get", orderId) as Promise<OrderDetail | null>,
   createOrder: (input: OrderInput) => ipcRenderer.invoke("orders:create", input) as Promise<OrderDetail>,
   updateOrder: (input: OrderUpdateInput) => ipcRenderer.invoke("orders:update", input) as Promise<OrderDetail>,
   updateOrderStatus: (orderId: string, status: OrderStatus) =>
     ipcRenderer.invoke("orders:update-status", orderId, status) as Promise<OrderDetail>,
   deleteOrder: (orderId: string) => ipcRenderer.invoke("orders:delete", orderId) as Promise<boolean>,
+  restoreOrder: (orderId: string) => ipcRenderer.invoke("orders:restore", orderId) as Promise<OrderDetail>,
+  permanentlyDeleteOrder: (orderId: string) => ipcRenderer.invoke("orders:permanently-delete", orderId) as Promise<boolean>,
   openOrderFolder: (orderId: string) => ipcRenderer.invoke("orders:open-folder", orderId) as Promise<boolean>,
   pickWechatQr: (orderId: string) => ipcRenderer.invoke("orders:pick-wechat-qr", orderId) as Promise<OrderDetail | null>,
   setWechatQr: (orderId: string, sourcePath: string) =>

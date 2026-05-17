@@ -33,6 +33,7 @@ export interface OrderRecord {
   trackingNumber: string;
   wechatQrPath: string | null;
   wechatQrOriginalName: string | null;
+  trashedAt: string | null;
   orderTime: string;
   createdAt: string;
   updatedAt: string;

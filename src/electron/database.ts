@@ -30,6 +30,7 @@ interface OrderRow {
   tracking_number?: string;
   wechat_qr_path?: string | null;
   wechat_qr_original_name?: string | null;
+  trashed_at?: string | null;
   order_time: string;
   created_at: string;
   updated_at: string;
@@ -97,8 +98,31 @@ export class OrderDatabase {
           COUNT(f.id) AS file_count
         FROM orders o
         LEFT JOIN order_files f ON f.order_id = o.id
+        WHERE o.trashed_at IS NULL
         GROUP BY o.id
         ORDER BY datetime(o.order_time) DESC, datetime(o.created_at) DESC`
+      )
+      .all() as unknown as OrderRow[];
+
+    return rows.map((row) => ({
+      ...mapOrder(row),
+      fileCount: Number(row.file_count ?? 0)
+    }));
+  }
+
+  listTrashedOrders(): OrderSummary[] {
+    this.pruneMissingFileRecords();
+
+    const rows = this.db
+      .prepare(
+        `SELECT
+          o.*,
+          COUNT(f.id) AS file_count
+        FROM orders o
+        LEFT JOIN order_files f ON f.order_id = o.id
+        WHERE o.trashed_at IS NOT NULL
+        GROUP BY o.id
+        ORDER BY datetime(o.trashed_at) DESC, datetime(o.order_time) DESC`
       )
       .all() as unknown as OrderRow[];
 
@@ -143,6 +167,7 @@ export class OrderDatabase {
           o.order_time
         FROM order_files f
         INNER JOIN orders o ON o.id = f.order_id
+        WHERE o.trashed_at IS NULL
         ORDER BY datetime(f.uploaded_at) DESC`
       )
       .all() as unknown as ArchivedFileRow[];
@@ -267,6 +292,30 @@ export class OrderDatabase {
   }
 
   async deleteOrder(orderId: string): Promise<boolean> {
+    const detail = this.getOrder(orderId);
+    if (!detail) return false;
+
+    this.db.prepare("UPDATE orders SET trashed_at = ?, updated_at = ? WHERE id = ?").run(
+      new Date().toISOString(),
+      new Date().toISOString(),
+      orderId
+    );
+
+    return true;
+  }
+
+  restoreOrder(orderId: string): OrderDetail {
+    const current = this.getOrder(orderId);
+    if (!current) throw new Error("订单不存在");
+
+    this.db.prepare("UPDATE orders SET trashed_at = NULL, updated_at = ? WHERE id = ?").run(new Date().toISOString(), orderId);
+
+    const restored = this.getOrder(orderId);
+    if (!restored) throw new Error("订单恢复失败");
+    return restored;
+  }
+
+  async permanentlyDeleteOrder(orderId: string): Promise<boolean> {
     const detail = this.getOrder(orderId);
     if (!detail) return false;
 
@@ -506,6 +555,7 @@ export class OrderDatabase {
         tracking_number TEXT NOT NULL DEFAULT '',
         wechat_qr_path TEXT,
         wechat_qr_original_name TEXT,
+        trashed_at TEXT,
         order_time TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -539,7 +589,8 @@ export class OrderDatabase {
       ["shipping_address", "ALTER TABLE orders ADD COLUMN shipping_address TEXT NOT NULL DEFAULT ''"],
       ["tracking_number", "ALTER TABLE orders ADD COLUMN tracking_number TEXT NOT NULL DEFAULT ''"],
       ["wechat_qr_path", "ALTER TABLE orders ADD COLUMN wechat_qr_path TEXT"],
-      ["wechat_qr_original_name", "ALTER TABLE orders ADD COLUMN wechat_qr_original_name TEXT"]
+      ["wechat_qr_original_name", "ALTER TABLE orders ADD COLUMN wechat_qr_original_name TEXT"],
+      ["trashed_at", "ALTER TABLE orders ADD COLUMN trashed_at TEXT"]
     ] as const;
 
     for (const [name, statement] of migrations) {
@@ -565,6 +616,7 @@ function mapOrder(row: OrderRow): OrderRecord {
     trackingNumber: row.tracking_number ?? "",
     wechatQrPath: row.wechat_qr_path ?? null,
     wechatQrOriginalName: row.wechat_qr_original_name ?? null,
+    trashedAt: row.trashed_at ?? null,
     orderTime: row.order_time,
     createdAt: row.created_at,
     updatedAt: row.updated_at

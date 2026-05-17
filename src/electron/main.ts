@@ -48,6 +48,7 @@ function createWindow(): void {
 
 function registerIpc(): void {
   ipcMain.handle("orders:list", () => getDatabase().listOrders());
+  ipcMain.handle("orders:list-trashed", () => getDatabase().listTrashedOrders());
   ipcMain.handle("orders:get", (_event, orderId: string) => getDatabase().getOrder(orderId));
   ipcMain.handle("orders:create", (_event, input: OrderInput) => getDatabase().createOrder(input));
   ipcMain.handle("orders:update", (_event, input: OrderUpdateInput) => getDatabase().updateOrder(input));
@@ -55,6 +56,8 @@ function registerIpc(): void {
     getDatabase().updateOrderStatus(orderId, status)
   );
   ipcMain.handle("orders:delete", (_event, orderId: string) => getDatabase().deleteOrder(orderId));
+  ipcMain.handle("orders:restore", (_event, orderId: string) => getDatabase().restoreOrder(orderId));
+  ipcMain.handle("orders:permanently-delete", (_event, orderId: string) => getDatabase().permanentlyDeleteOrder(orderId));
   ipcMain.handle("orders:open-folder", async (_event, orderId: string) => {
     const folder = await getDatabase().getOrCreateOrderFolder(orderId);
     const error = await shell.openPath(folder);

@@ -2302,3 +2302,109 @@ select option {
     font-size: 11px;
   }
 }
+
+.metric.danger .metric-icon {
+  background:
+    linear-gradient(145deg, rgba(255, 232, 232, 0.9), rgba(255, 244, 248, 0.68)),
+    rgba(255, 255, 255, 0.72);
+  color: #d95f59;
+}
+
+.metric.danger:hover,
+.metric.danger:focus-visible {
+  border-color: rgba(239, 116, 108, 0.36);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.95), rgba(255, 231, 231, 0.68)),
+    rgba(255, 255, 255, 0.78);
+}
+
+.danger-button.compact-action {
+  min-height: 34px;
+  padding: 0 11px;
+  font-size: 13px;
+}
+
+.trash-panel {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  gap: 10px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.trash-row {
+  display: grid;
+  grid-template-columns: minmax(190px, 1fr) auto auto auto;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.74);
+  border-radius: 20px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.82), rgba(255, 244, 246, 0.46)),
+    rgba(255, 255, 255, 0.58);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.84),
+    0 14px 30px rgba(80, 112, 122, 0.1);
+}
+
+.trash-row-main {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.trash-row-main strong,
+.trash-row-main span,
+.trash-row-main small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trash-row-main strong {
+  color: #213137;
+  font-size: 16px;
+  font-weight: 820;
+}
+
+.trash-row-main span,
+.trash-row-main small {
+  color: #748184;
+  font-size: 12px;
+}
+
+.trash-file-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(239, 185, 104, 0.3);
+  border-radius: 999px;
+  background: rgba(255, 246, 219, 0.74);
+  color: #956a1d;
+  font-size: 12px;
+  font-weight: 780;
+  white-space: nowrap;
+}
+
+.trash-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@media (max-width: 1240px) {
+  .trash-row {
+    grid-template-columns: minmax(180px, 1fr) auto;
+  }
+
+  .trash-actions {
+    grid-column: 1 / -1;
+  }
+}

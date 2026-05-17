@@ -58,7 +58,7 @@ interface RecognizedCustomerInfo {
   designSize?: string;
 }
 
-type ActiveView = "orders" | "archive" | "fees";
+type ActiveView = "orders" | "archive" | "trash" | "fees";
 type StatusFilterValue = "all" | OrderStatus;
 
 const allCategoryLabel = "全部";
@@ -124,10 +124,12 @@ function getContextMenuState(clientX: number, clientY: number, order: OrderSumma
 export default function App() {
   const [activeView, setActiveView] = useState<ActiveView>("orders");
   const [orders, setOrders] = useState<OrderSummary[]>([]);
+  const [trashedOrders, setTrashedOrders] = useState<OrderSummary[]>([]);
   const [archivedFiles, setArchivedFiles] = useState<ArchivedFile[]>([]);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [selectedOrder, setSelectedOrder] = useState<OrderDetail | null>(null);
   const [query, setQuery] = useState("");
+  const [trashQuery, setTrashQuery] = useState("");
   const [archiveQuery, setArchiveQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState(allCategoryLabel);
   const [statusFilter, setStatusFilter] = useState<StatusFilterValue>("all");
@@ -142,8 +144,10 @@ export default function App() {
   const [pendingWechatQrName, setPendingWechatQrName] = useState("");
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<OrderSummary | null>(null);
+  const [permanentDeleteTarget, setPermanentDeleteTarget] = useState<OrderSummary | null>(null);
   const [isSaving, setSaving] = useState(false);
   const [isDeleting, setDeleting] = useState(false);
+  const [isPermanentlyDeleting, setPermanentlyDeleting] = useState(false);
   const [isUploading, setUploading] = useState(false);
   const [isQrUploading, setQrUploading] = useState(false);
   const [isDragging, setDragging] = useState(false);
@@ -151,11 +155,15 @@ export default function App() {
 
   useEffect(() => {
     void refreshOrders();
+    void refreshTrashedOrders();
   }, []);
 
   useEffect(() => {
     if (activeView === "archive") {
       void refreshArchivedFiles();
+    }
+    if (activeView === "trash") {
+      void refreshTrashedOrders();
     }
   }, [activeView]);
 
@@ -197,6 +205,7 @@ export default function App() {
   useEffect(() => {
     function refreshWhenFocused() {
       void window.orderApi.listOrders().then(setOrders);
+      void window.orderApi.listTrashedOrders().then(setTrashedOrders);
       if (selectedOrderId) {
         void window.orderApi.getOrder(selectedOrderId).then(setSelectedOrder);
       }
@@ -236,6 +245,28 @@ export default function App() {
       return matchesCategory && matchesStatus && matchesDate && matchesQuery;
     });
   }, [orders, query, categoryFilter, statusFilter, dateFrom, dateTo]);
+
+  const filteredTrashedOrders = useMemo(() => {
+    const normalizedQuery = trashQuery.trim().toLowerCase();
+    if (!normalizedQuery) return trashedOrders;
+
+    return trashedOrders.filter((order) =>
+      [
+        order.workOrderNo,
+        order.customerNickname,
+        order.customerWechat,
+        order.customerPhone,
+        order.shippingAddress,
+        order.trackingNumber,
+        order.designSize,
+        order.category,
+        getOrderStatusOption(order.status).label
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(normalizedQuery)
+    );
+  }, [trashQuery, trashedOrders]);
 
   const filteredArchivedFiles = useMemo(() => {
     const normalizedQuery = archiveQuery.trim().toLowerCase();
@@ -286,9 +317,10 @@ export default function App() {
       today: orders.filter((order) => isSameLocalDay(new Date(order.orderTime), now)).length,
       wechatPending: orders.filter((order) => order.status === "wechat_pending").length,
       designing: orders.filter((order) => order.status === "designing").length,
-      finished: orders.filter((order) => order.status === "finished_uploaded").length
+      finished: orders.filter((order) => order.status === "finished_uploaded").length,
+      trashed: trashedOrders.length
     };
-  }, [orders]);
+  }, [orders, trashedOrders.length]);
 
   const archiveOverview = useMemo(() => {
     return {
@@ -328,12 +360,19 @@ export default function App() {
     };
   }, [orders, stats.completedCount, stats.monthFee, stats.todayFee, stats.totalFee, stats.weekFee]);
 
-  const title = activeView === "orders" ? "客户订单管理系统" : activeView === "archive" ? "文件归档" : "费用总览";
-  const eyebrow = activeView === "orders" ? "订单工作台" : activeView === "archive" ? "全部订单附件" : "设计费统计";
+  const title =
+    activeView === "orders" ? "客户订单管理系统" : activeView === "archive" ? "文件归档" : activeView === "trash" ? "垃圾箱" : "费用总览";
+  const eyebrow =
+    activeView === "orders" ? "订单工作台" : activeView === "archive" ? "全部订单附件" : activeView === "trash" ? "可恢复的订单" : "设计费统计";
 
   async function refreshOrders() {
     const nextOrders = await window.orderApi.listOrders();
     setOrders(nextOrders);
+  }
+
+  async function refreshTrashedOrders() {
+    const nextOrders = await window.orderApi.listTrashedOrders();
+    setTrashedOrders(nextOrders);
   }
 
   async function refreshArchivedFiles() {
@@ -346,6 +385,9 @@ export default function App() {
     await refreshSelectedOrder();
     if (activeView === "archive") {
       await refreshArchivedFiles();
+    }
+    if (activeView === "trash") {
+      await refreshTrashedOrders();
     }
   }
 
@@ -514,7 +556,9 @@ export default function App() {
       setDeleting(true);
       await window.orderApi.deleteOrder(deleteTarget.id);
       const nextOrders = await window.orderApi.listOrders();
+      const nextTrashedOrders = await window.orderApi.listTrashedOrders();
       setOrders(nextOrders);
+      setTrashedOrders(nextTrashedOrders);
       if (activeView === "archive") await refreshArchivedFiles();
 
       if (selectedOrderId === deleteTarget.id) {
@@ -522,11 +566,45 @@ export default function App() {
       }
 
       setDeleteTarget(null);
-      showToast("订单已删除");
+      showToast("订单已移入垃圾箱");
     } catch (error) {
       showToast(getErrorMessage(error));
     } finally {
       setDeleting(false);
+    }
+  }
+
+  async function restoreTrashedOrder(order: OrderSummary) {
+    try {
+      const restored = await window.orderApi.restoreOrder(order.id);
+      await refreshOrders();
+      await refreshTrashedOrders();
+      setSelectedOrderId(restored.id);
+      setSelectedOrder(restored);
+      setActiveView("orders");
+      showToast("订单已恢复");
+    } catch (error) {
+      showToast(getErrorMessage(error));
+    }
+  }
+
+  async function confirmPermanentlyDeleteOrder() {
+    if (!permanentDeleteTarget) return;
+
+    try {
+      setPermanentlyDeleting(true);
+      await window.orderApi.permanentlyDeleteOrder(permanentDeleteTarget.id);
+      const nextTrashedOrders = await window.orderApi.listTrashedOrders();
+      setTrashedOrders(nextTrashedOrders);
+      if (selectedOrderId === permanentDeleteTarget.id) {
+        setSelectedOrderId(orders[0]?.id ?? null);
+      }
+      setPermanentDeleteTarget(null);
+      showToast("订单已永久删除");
+    } catch (error) {
+      showToast(getErrorMessage(error));
+    } finally {
+      setPermanentlyDeleting(false);
     }
   }
 
@@ -662,6 +740,14 @@ export default function App() {
             <span>文件归档</span>
           </button>
           <button
+            className={`nav-item ${activeView === "trash" ? "active" : ""}`}
+            type="button"
+            onClick={() => setActiveView("trash")}
+          >
+            <Trash2 size={18} />
+            <span>垃圾箱</span>
+          </button>
+          <button
             className={`nav-item ${activeView === "fees" ? "active" : ""}`}
             type="button"
             onClick={() => setActiveView("fees")}
@@ -703,6 +789,13 @@ export default function App() {
             <Metric label="微信未加" value={orderOverview.wechatPending.toString()} icon={<WalletCards size={18} />} onReveal={showToast} />
             <Metric label="设计中" value={orderOverview.designing.toString()} icon={<RefreshCw size={18} />} onReveal={showToast} />
             <Metric label="已完稿上传" value={orderOverview.finished.toString()} icon={<CheckCircle2 size={18} />} onReveal={showToast} />
+            <Metric
+              label="垃圾箱"
+              value={orderOverview.trashed.toString()}
+              icon={<Trash2 size={18} />}
+              tone="danger"
+              onClick={() => setActiveView("trash")}
+            />
           </section>
         ) : null}
 
@@ -756,11 +849,26 @@ export default function App() {
           />
         ) : null}
 
+        {activeView === "trash" ? (
+          <TrashView
+            orders={filteredTrashedOrders}
+            onPermanentDelete={setPermanentDeleteTarget}
+            onQueryChange={setTrashQuery}
+            onRestore={(order) => void restoreTrashedOrder(order)}
+            query={trashQuery}
+          />
+        ) : null}
+
         {activeView === "fees" ? <FeesView summary={feeSummary} /> : null}
       </main>
 
       <aside className="detail-panel">
-        {selectedOrder ? (
+        {activeView === "trash" ? (
+          <div className="detail-empty">
+            <Trash2 size={36} />
+            <span>垃圾箱中的订单可在列表中恢复，或确认后永久删除。</span>
+          </div>
+        ) : selectedOrder ? (
           <>
             <div className="detail-head">
               <div>
@@ -887,7 +995,7 @@ export default function App() {
             }}
           >
             <Trash2 size={16} />
-            <span>删除订单</span>
+            <span>移入垃圾箱</span>
           </button>
         </div>
       ) : null}
@@ -921,13 +1029,13 @@ export default function App() {
 
       {deleteTarget ? (
         <div className="modal-backdrop" role="presentation">
-          <div className="confirm-modal" role="dialog" aria-modal="true" aria-label="确认删除订单">
+          <div className="confirm-modal" role="dialog" aria-modal="true" aria-label="确认移入垃圾箱">
             <div className="confirm-icon">
               <AlertTriangle size={24} />
             </div>
-            <h2>确认删除订单？</h2>
+            <h2>移入垃圾箱？</h2>
             <p>
-              将删除订单 <strong>{deleteTarget.workOrderNo}</strong> 以及系统归档的附件文件。这个操作不可撤销。
+              将订单 <strong>{deleteTarget.workOrderNo}</strong> 移入垃圾箱，之后可以在垃圾箱中恢复。
             </p>
             <div className="modal-actions">
               <button className="secondary-button" type="button" onClick={() => setDeleteTarget(null)} disabled={isDeleting}>
@@ -935,7 +1043,40 @@ export default function App() {
               </button>
               <button className="danger-button" type="button" onClick={() => void confirmDeleteOrder()} disabled={isDeleting}>
                 <Trash2 size={18} />
-                <span>{isDeleting ? "删除中..." : "确认删除"}</span>
+                <span>{isDeleting ? "移动中..." : "移入垃圾箱"}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {permanentDeleteTarget ? (
+        <div className="modal-backdrop" role="presentation">
+          <div className="confirm-modal" role="dialog" aria-modal="true" aria-label="确认永久删除订单">
+            <div className="confirm-icon">
+              <AlertTriangle size={24} />
+            </div>
+            <h2>永久删除订单？</h2>
+            <p>
+              将彻底删除订单 <strong>{permanentDeleteTarget.workOrderNo}</strong> 以及系统归档的附件文件。这个操作不可撤销。
+            </p>
+            <div className="modal-actions">
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => setPermanentDeleteTarget(null)}
+                disabled={isPermanentlyDeleting}
+              >
+                取消
+              </button>
+              <button
+                className="danger-button"
+                type="button"
+                onClick={() => void confirmPermanentlyDeleteOrder()}
+                disabled={isPermanentlyDeleting}
+              >
+                <Trash2 size={18} />
+                <span>{isPermanentlyDeleting ? "删除中..." : "永久删除"}</span>
               </button>
             </div>
           </div>
@@ -1414,6 +1555,70 @@ function StatusFilter({
   );
 }
 
+function TrashView({
+  onPermanentDelete,
+  onQueryChange,
+  onRestore,
+  orders,
+  query
+}: {
+  onPermanentDelete: (order: OrderSummary) => void;
+  onQueryChange: (value: string) => void;
+  onRestore: (order: OrderSummary) => void;
+  orders: OrderSummary[];
+  query: string;
+}) {
+  return (
+    <>
+      <section className="toolbar" aria-label="垃圾箱筛选">
+        <label className="search-field">
+          <Search size={18} />
+          <input
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+            placeholder="搜索垃圾箱中的源单号 / 客户 / 微信 / 手机 / 地址 / 尺寸 / 状态"
+          />
+        </label>
+      </section>
+
+      <section className="trash-panel" aria-label="垃圾箱列表">
+        {orders.length === 0 ? (
+          <div className="empty-state">
+            <Trash2 size={34} />
+            <span>垃圾箱为空</span>
+          </div>
+        ) : (
+          orders.map((order) => (
+            <div className="trash-row" key={order.id}>
+              <div className="trash-row-main">
+                <strong>{order.workOrderNo}</strong>
+                <span>
+                  {order.customerNickname} · {order.category} · {formatCurrency(order.designFee)}
+                </span>
+                <small>
+                  移入时间：{formatDateTime(order.trashedAt ?? order.updatedAt)} · 原订单时间：{formatDate(order.orderTime)}
+                </small>
+              </div>
+              <StatusBadge status={order.status} />
+              <span className="trash-file-count">{order.fileCount} 个文件</span>
+              <div className="trash-actions">
+                <button className="secondary-button compact-action" type="button" onClick={() => onRestore(order)}>
+                  <RefreshCw size={15} />
+                  <span>恢复</span>
+                </button>
+                <button className="danger-button compact-action" type="button" onClick={() => onPermanentDelete(order)}>
+                  <Trash2 size={15} />
+                  <span>永久删除</span>
+                </button>
+              </div>
+            </div>
+          ))
+        )}
+      </section>
+    </>
+  );
+}
+
 function ArchiveView({
   files,
   onCopy,
@@ -1649,21 +1854,31 @@ function SectionHeading({ icon, title }: { icon: ReactNode; title: string }) {
 
 function Metric({
   label,
+  onClick,
   onReveal,
+  tone,
   value,
   icon
 }: {
   label: string;
+  onClick?: () => void;
   onReveal?: (message: string) => void;
+  tone?: "danger";
   value: string;
   icon: ReactNode;
 }) {
   return (
     <button
-      className="metric"
+      className={`metric ${tone ?? ""}`}
       type="button"
       title={`${label}: ${value}`}
-      onClick={() => onReveal?.(`${label}：${value}`)}
+      onClick={() => {
+        if (onClick) {
+          onClick();
+          return;
+        }
+        onReveal?.(`${label}：${value}`);
+      }}
     >
       <div className="metric-icon">{icon}</div>
       <span>{label}</span>
