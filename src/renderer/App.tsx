@@ -25,7 +25,6 @@ import {
   WalletCards,
   X
 } from "lucide-react";
-import dajiHeaderArt from "./assets/daji-header-gpt-image-2.png";
 import { DESIGN_CATEGORIES } from "../shared/categories";
 import { getOrderStatusOption, ORDER_STATUS_OPTIONS, type OrderStatus } from "../shared/statuses";
 import { validateOrderInput, type OrderFormErrors } from "../shared/validation";
@@ -766,15 +765,10 @@ export default function App() {
 
       <main className="workspace">
         <header className="topbar">
-          <div className="topbar-heading">
+          <div>
             <p className="eyebrow">{eyebrow}</p>
             <h1>{title}</h1>
           </div>
-          {activeView === "orders" ? (
-            <figure className="topbar-illustration" aria-label="王者荣耀妲己性感插画">
-              <img src={dajiHeaderArt} alt="王者荣耀妲己性感插画" />
-            </figure>
-          ) : null}
           <div className="topbar-actions">
             <button className="icon-button" type="button" onClick={() => void refreshCurrentView()} aria-label="刷新">
               <RefreshCw size={18} />
