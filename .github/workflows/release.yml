@@ -36,6 +36,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-installer
+          if-no-files-found: error
           path: |
             release/*Setup.exe
             release/*.blockmap
@@ -43,13 +44,11 @@ jobs:
 
       - name: Create GitHub release
         if: startsWith(github.ref, 'refs/tags/')
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "${{ github.ref_name }}" `
-            release/*Setup.exe `
-            release/*.blockmap `
-            release/latest.yml `
-            --title "设计客户管理系统 ${{ github.ref_name }}" `
-            --notes "Windows installer for 设计客户管理系统."
+        uses: softprops/action-gh-release@v2
+        with:
+          name: 设计客户管理系统 ${{ github.ref_name }}
+          body: Windows installer for 设计客户管理系统.
+          files: |
+            release/*Setup.exe
+            release/*.blockmap
+            release/latest.yml

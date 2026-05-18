@@ -1,6 +1,6 @@
 {
   "name": "design-order-manager",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "设计客户管理系统",
   "author": "moshangqingchen",
   "private": true,
@@ -11,7 +11,7 @@
     "build:electron": "tsc -p tsconfig.electron.json",
     "typecheck:renderer": "tsc -p tsconfig.json --noEmit",
     "pack": "npm run build && electron-builder --dir",
-    "dist": "npm run build && electron-builder",
+    "dist": "npm run build && electron-builder --publish never",
     "start": "npm run build && electron .",
     "test:smoke": "node scripts/smoke-test.mjs"
   },
