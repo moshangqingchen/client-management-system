@@ -14,6 +14,10 @@ function getDatabase(): OrderDatabase {
 }
 
 function getAssetPath(fileName: string): string {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, "assets", fileName);
+  }
+
   return path.join(__dirname, "../../assets", fileName);
 }
 

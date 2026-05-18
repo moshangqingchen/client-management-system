@@ -29,6 +29,7 @@ coverage/
 .nyc_output/
 .vite/
 .vite-temp/
+.electron-builder-cache/
 .eslintcache
 *.tsbuildinfo
 

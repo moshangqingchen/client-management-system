@@ -1,6 +1,8 @@
 {
   "name": "design-order-manager",
   "version": "0.1.0",
+  "description": "设计客户管理系统",
+  "author": "moshangqingchen",
   "private": true,
   "main": "dist-electron/electron/main.js",
   "scripts": {
@@ -8,6 +10,8 @@
     "build": "npm run build:electron && npm run typecheck:renderer && vite build",
     "build:electron": "tsc -p tsconfig.electron.json",
     "typecheck:renderer": "tsc -p tsconfig.json --noEmit",
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder",
     "start": "npm run build && electron .",
     "test:smoke": "node scripts/smoke-test.mjs"
   },
@@ -22,10 +26,52 @@
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "^42.0.1",
+    "electron-builder": "^26.8.1",
     "typescript": "^5.7.2",
     "vite": "^6.0.7"
   },
   "engines": {
     "node": ">=24.0.0"
+  },
+  "build": {
+    "appId": "com.moshangqingchen.client-management-system",
+    "productName": "设计客户管理系统",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "assets",
+        "to": "assets",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/app-icon-design-blue-gpt-image-2.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "设计客户管理系统",
+      "artifactName": "${productName}-${version}-Setup.${ext}"
+    }
   }
 }
