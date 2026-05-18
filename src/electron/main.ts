@@ -25,7 +25,7 @@ function createWindow(): void {
     minHeight: 760,
     title: "客户订单管理系统",
     backgroundColor: "#111315",
-    icon: getAssetPath("app-icon-dog-gold-gpt-image-2.png"),
+    icon: getAssetPath("app-icon-design-blue-gpt-image-2.ico"),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
