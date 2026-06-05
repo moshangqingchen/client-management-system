@@ -2,6 +2,9 @@ import { clipboard, contextBridge, ipcRenderer, webUtils } from "electron";
 import type { OrderStatus } from "../shared/statuses";
 import type {
   ArchivedFile,
+  CustomerDetail,
+  CustomerLookupInput,
+  CustomerProfile,
   OrderDetail,
   OrderFile,
   OrderInput,
@@ -14,6 +17,9 @@ const api = {
   listOrders: () => ipcRenderer.invoke("orders:list") as Promise<OrderSummary[]>,
   listTrashedOrders: () => ipcRenderer.invoke("orders:list-trashed") as Promise<OrderSummary[]>,
   getOrder: (orderId: string) => ipcRenderer.invoke("orders:get", orderId) as Promise<OrderDetail | null>,
+  listCustomers: () => ipcRenderer.invoke("customers:list") as Promise<CustomerProfile[]>,
+  getCustomer: (customerId: string) => ipcRenderer.invoke("customers:get", customerId) as Promise<CustomerDetail | null>,
+  lookupCustomer: (input: CustomerLookupInput) => ipcRenderer.invoke("customers:lookup", input) as Promise<CustomerProfile | null>,
   createOrder: (input: OrderInput) => ipcRenderer.invoke("orders:create", input) as Promise<OrderDetail>,
   updateOrder: (input: OrderUpdateInput) => ipcRenderer.invoke("orders:update", input) as Promise<OrderDetail>,
   updateOrderStatus: (orderId: string, status: OrderStatus) =>

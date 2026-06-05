@@ -22,13 +22,14 @@ import {
   Sparkles,
   Trash2,
   UploadCloud,
+  UsersRound,
   WalletCards,
   X
 } from "lucide-react";
 import { DESIGN_CATEGORIES } from "../shared/categories";
 import { getOrderStatusOption, ORDER_STATUS_OPTIONS, type OrderStatus } from "../shared/statuses";
 import { validateOrderInput, type OrderFormErrors } from "../shared/validation";
-import type { ArchivedFile, OrderDetail, OrderFile, OrderInput, OrderSummary } from "../shared/types";
+import type { ArchivedFile, CustomerDetail, CustomerProfile, OrderDetail, OrderFile, OrderInput, OrderSummary } from "../shared/types";
 import welcomeKittenUrl from "./assets/welcome-kitten.png";
 
 interface OrderFormState {
@@ -59,7 +60,7 @@ interface RecognizedCustomerInfo {
   designSize?: string;
 }
 
-type ActiveView = "orders" | "archive" | "trash" | "fees";
+type ActiveView = "orders" | "customers" | "archive" | "trash" | "fees";
 type StatusFilterValue = "all" | OrderStatus;
 
 const allCategoryLabel = "全部";
@@ -106,6 +107,39 @@ function createFormFromOrder(order: OrderSummary | OrderDetail): OrderFormState 
   };
 }
 
+function getCustomerLookupKey(form: OrderFormState): string {
+  const wechat = form.customerWechat.trim().toLowerCase();
+  const phone = form.customerPhone.trim();
+  const nickname = form.customerNickname.trim();
+  if (wechat) return `wechat:${wechat}`;
+  if (phone) return `phone:${phone}`;
+  if (nickname.length >= 2) return `nickname:${nickname}`;
+  return "";
+}
+
+function fillEmptyCustomerFields(form: OrderFormState, customer: CustomerProfile): OrderFormState {
+  const next = {
+    ...form,
+    customerNickname: form.customerNickname.trim() ? form.customerNickname : customer.customerNickname,
+    customerWechat: form.customerWechat.trim() ? form.customerWechat : customer.customerWechat,
+    customerPhone: form.customerPhone.trim() ? form.customerPhone : customer.customerPhone,
+    shippingAddress: form.shippingAddress.trim() ? form.shippingAddress : customer.shippingAddress
+  };
+
+  return next.customerNickname === form.customerNickname &&
+    next.customerWechat === form.customerWechat &&
+    next.customerPhone === form.customerPhone &&
+    next.shippingAddress === form.shippingAddress
+    ? form
+    : next;
+}
+
+function getCustomerIdentityLabel(customer: Pick<CustomerProfile, "customerNickname" | "customerPhone" | "customerWechat">): string {
+  if (customer.customerWechat) return `微信：${customer.customerWechat}`;
+  if (customer.customerPhone) return `手机号：${customer.customerPhone}`;
+  return `网名：${customer.customerNickname || "未命名"}`;
+}
+
 function getContextMenuState(clientX: number, clientY: number, order: OrderSummary): ContextMenuState {
   const viewportWidth = window.innerWidth || 1280;
   const viewportHeight = window.innerHeight || 800;
@@ -127,11 +161,15 @@ export default function App() {
   const [orders, setOrders] = useState<OrderSummary[]>([]);
   const [trashedOrders, setTrashedOrders] = useState<OrderSummary[]>([]);
   const [archivedFiles, setArchivedFiles] = useState<ArchivedFile[]>([]);
+  const [customers, setCustomers] = useState<CustomerProfile[]>([]);
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
+  const [selectedCustomer, setSelectedCustomer] = useState<CustomerDetail | null>(null);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [selectedOrder, setSelectedOrder] = useState<OrderDetail | null>(null);
   const [query, setQuery] = useState("");
   const [trashQuery, setTrashQuery] = useState("");
   const [archiveQuery, setArchiveQuery] = useState("");
+  const [customerQuery, setCustomerQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState(allCategoryLabel);
   const [statusFilter, setStatusFilter] = useState<StatusFilterValue>("all");
   const [dateFrom, setDateFrom] = useState("");
@@ -155,10 +193,12 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [isIntroVisible, setIntroVisible] = useState(true);
   const [isIntroClosing, setIntroClosing] = useState(false);
+  const lastCustomerLookupKey = useRef("");
 
   useEffect(() => {
     void refreshOrders();
     void refreshTrashedOrders();
+    void refreshCustomers();
   }, []);
 
   useEffect(() => {
@@ -178,7 +218,26 @@ export default function App() {
     if (activeView === "trash") {
       void refreshTrashedOrders();
     }
+    if (activeView === "customers") {
+      void refreshCustomers();
+    }
   }, [activeView]);
+
+  useEffect(() => {
+    if (!selectedCustomerId) {
+      setSelectedCustomer(null);
+      return;
+    }
+
+    let alive = true;
+    window.orderApi.getCustomer(selectedCustomerId).then((customer) => {
+      if (alive) setSelectedCustomer(customer);
+    });
+
+    return () => {
+      alive = false;
+    };
+  }, [selectedCustomerId]);
 
   useEffect(() => {
     if (!selectedOrderId) {
@@ -203,6 +262,42 @@ export default function App() {
   }, [orders, selectedOrderId]);
 
   useEffect(() => {
+    if (!selectedCustomerId && customers.length > 0) {
+      setSelectedCustomerId(customers[0].id);
+    }
+  }, [customers, selectedCustomerId]);
+
+  useEffect(() => {
+    if (dialogMode !== "create") return;
+
+    const lookupKey = getCustomerLookupKey(form);
+    if (!lookupKey || lookupKey === lastCustomerLookupKey.current) return;
+
+    const timer = window.setTimeout(() => {
+      lastCustomerLookupKey.current = lookupKey;
+      void window.orderApi
+        .lookupCustomer({
+          customerNickname: form.customerNickname,
+          customerWechat: form.customerWechat,
+          customerPhone: form.customerPhone
+        })
+        .then((customer) => {
+          if (!customer) return;
+
+          setForm((current) => {
+            const next = fillEmptyCustomerFields(current, customer);
+            if (next === current) return current;
+            showToast("已带出老客户资料");
+            return next;
+          });
+        })
+        .catch(() => undefined);
+    }, 360);
+
+    return () => window.clearTimeout(timer);
+  }, [dialogMode, form.customerNickname, form.customerPhone, form.customerWechat]);
+
+  useEffect(() => {
     function closeFloatingUi() {
       setContextMenu(null);
     }
@@ -219,8 +314,12 @@ export default function App() {
     function refreshWhenFocused() {
       void window.orderApi.listOrders().then(setOrders);
       void window.orderApi.listTrashedOrders().then(setTrashedOrders);
+      void window.orderApi.listCustomers().then(setCustomers);
       if (selectedOrderId) {
         void window.orderApi.getOrder(selectedOrderId).then(setSelectedOrder);
+      }
+      if (selectedCustomerId) {
+        void window.orderApi.getCustomer(selectedCustomerId).then(setSelectedCustomer);
       }
       if (activeView === "archive") {
         void window.orderApi.listFiles().then(setArchivedFiles);
@@ -229,7 +328,7 @@ export default function App() {
 
     window.addEventListener("focus", refreshWhenFocused);
     return () => window.removeEventListener("focus", refreshWhenFocused);
-  }, [activeView, selectedOrderId]);
+  }, [activeView, selectedCustomerId, selectedOrderId]);
 
   const filteredOrders = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -303,6 +402,23 @@ export default function App() {
     );
   }, [archiveQuery, archivedFiles]);
 
+  const filteredCustomers = useMemo(() => {
+    const normalizedQuery = customerQuery.trim().toLowerCase();
+    if (!normalizedQuery) return customers;
+
+    return customers.filter((customer) =>
+      [
+        customer.customerNickname,
+        customer.customerWechat,
+        customer.customerPhone,
+        customer.shippingAddress
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(normalizedQuery)
+    );
+  }, [customerQuery, customers]);
+
   const stats = useMemo(() => {
     const completedOrders = orders.filter((order) => order.status === "finished_uploaded");
     const now = new Date();
@@ -344,6 +460,15 @@ export default function App() {
     };
   }, [archivedFiles]);
 
+  const customerOverview = useMemo(() => {
+    return {
+      total: customers.length,
+      withWechat: customers.filter((customer) => customer.customerWechat).length,
+      withPhone: customers.filter((customer) => customer.customerPhone).length,
+      repeatCustomers: customers.filter((customer) => customer.orderCount > 1).length
+    };
+  }, [customers]);
+
   const feeSummary = useMemo(() => {
     const completedOrders = orders.filter((order) => order.status === "finished_uploaded");
     const byCategory = DESIGN_CATEGORIES.map((category) => {
@@ -374,9 +499,25 @@ export default function App() {
   }, [orders, stats.completedCount, stats.monthFee, stats.todayFee, stats.totalFee, stats.weekFee]);
 
   const title =
-    activeView === "orders" ? "客户订单管理系统" : activeView === "archive" ? "文件归档" : activeView === "trash" ? "垃圾箱" : "费用总览";
+    activeView === "orders"
+      ? "客户订单管理系统"
+      : activeView === "customers"
+        ? "客户资料库"
+        : activeView === "archive"
+          ? "文件归档"
+          : activeView === "trash"
+            ? "垃圾箱"
+            : "费用总览";
   const eyebrow =
-    activeView === "orders" ? "订单工作台" : activeView === "archive" ? "全部订单附件" : activeView === "trash" ? "可恢复的订单" : "设计费统计";
+    activeView === "orders"
+      ? "订单工作台"
+      : activeView === "customers"
+        ? "老客户自动补全"
+        : activeView === "archive"
+          ? "全部订单附件"
+          : activeView === "trash"
+            ? "可恢复的订单"
+            : "设计费统计";
 
   async function refreshOrders() {
     const nextOrders = await window.orderApi.listOrders();
@@ -393,9 +534,15 @@ export default function App() {
     setArchivedFiles(files);
   }
 
+  async function refreshCustomers() {
+    const nextCustomers = await window.orderApi.listCustomers();
+    setCustomers(nextCustomers);
+  }
+
   async function refreshCurrentView() {
     await refreshOrders();
     await refreshSelectedOrder();
+    await refreshCustomers();
     if (activeView === "archive") {
       await refreshArchivedFiles();
     }
@@ -478,6 +625,7 @@ export default function App() {
       }
 
       await refreshOrders();
+      await refreshCustomers();
       if (activeView === "archive") await refreshArchivedFiles();
       setSelectedOrderId(saved.id);
       setSelectedOrder(saved);
@@ -495,6 +643,7 @@ export default function App() {
       setContextMenu(null);
       const updated = await window.orderApi.updateOrderStatus(order.id, status);
       await refreshOrders();
+      await refreshCustomers();
       if (activeView === "archive") await refreshArchivedFiles();
       if (selectedOrderId === order.id) {
         setSelectedOrder(updated);
@@ -572,6 +721,7 @@ export default function App() {
       const nextTrashedOrders = await window.orderApi.listTrashedOrders();
       setOrders(nextOrders);
       setTrashedOrders(nextTrashedOrders);
+      await refreshCustomers();
       if (activeView === "archive") await refreshArchivedFiles();
 
       if (selectedOrderId === deleteTarget.id) {
@@ -592,6 +742,7 @@ export default function App() {
       const restored = await window.orderApi.restoreOrder(order.id);
       await refreshOrders();
       await refreshTrashedOrders();
+      await refreshCustomers();
       setSelectedOrderId(restored.id);
       setSelectedOrder(restored);
       setActiveView("orders");
@@ -609,6 +760,7 @@ export default function App() {
       await window.orderApi.permanentlyDeleteOrder(permanentDeleteTarget.id);
       const nextTrashedOrders = await window.orderApi.listTrashedOrders();
       setTrashedOrders(nextTrashedOrders);
+      await refreshCustomers();
       if (selectedOrderId === permanentDeleteTarget.id) {
         setSelectedOrderId(orders[0]?.id ?? null);
       }
@@ -726,7 +878,7 @@ export default function App() {
 
   return (
     <>
-      <div className={`app-shell ${isIntroVisible ? "app-shell-opening" : ""}`}>
+      <div className={`app-shell ${activeView === "orders" ? "" : "app-shell-no-detail"} ${isIntroVisible ? "app-shell-opening" : ""}`}>
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">设</div>
@@ -744,6 +896,14 @@ export default function App() {
           >
             <ReceiptText size={18} />
             <span>客户订单</span>
+          </button>
+          <button
+            className={`nav-item ${activeView === "customers" ? "active" : ""}`}
+            type="button"
+            onClick={() => setActiveView("customers")}
+          >
+            <UsersRound size={18} />
+            <span>客户资料</span>
           </button>
           <button
             className={`nav-item ${activeView === "archive" ? "active" : ""}`}
@@ -822,6 +982,15 @@ export default function App() {
           </section>
         ) : null}
 
+        {activeView === "customers" ? (
+          <section className="metric-strip compact" aria-label="客户资料概览">
+            <Metric label="客户数" value={customerOverview.total.toString()} icon={<UsersRound size={18} />} onReveal={showToast} />
+            <Metric label="有微信" value={customerOverview.withWechat.toString()} icon={<WalletCards size={18} />} onReveal={showToast} />
+            <Metric label="有手机号" value={customerOverview.withPhone.toString()} icon={<Phone size={18} />} onReveal={showToast} />
+            <Metric label="复购客户" value={customerOverview.repeatCustomers.toString()} icon={<RefreshCw size={18} />} onReveal={showToast} />
+          </section>
+        ) : null}
+
         {activeView === "orders" ? (
           <OrdersView
             categoryFilter={categoryFilter}
@@ -863,6 +1032,22 @@ export default function App() {
           />
         ) : null}
 
+        {activeView === "customers" ? (
+          <CustomersView
+            customers={filteredCustomers}
+            onCopy={copyValue}
+            onQueryChange={setCustomerQuery}
+            onSelectCustomer={setSelectedCustomerId}
+            onSelectOrder={(orderId) => {
+              setSelectedOrderId(orderId);
+              setActiveView("orders");
+            }}
+            query={customerQuery}
+            selectedCustomer={selectedCustomer}
+            selectedCustomerId={selectedCustomerId}
+          />
+        ) : null}
+
         {activeView === "trash" ? (
           <TrashView
             orders={filteredTrashedOrders}
@@ -876,13 +1061,9 @@ export default function App() {
         {activeView === "fees" ? <FeesView summary={feeSummary} /> : null}
       </main>
 
-      <aside className="detail-panel">
-        {activeView === "trash" ? (
-          <div className="detail-empty">
-            <Trash2 size={36} />
-            <span>垃圾箱中的订单可在列表中恢复，或确认后永久删除。</span>
-          </div>
-        ) : selectedOrder ? (
+      {activeView === "orders" ? (
+        <aside className="detail-panel">
+        {selectedOrder ? (
           <>
             <div className="detail-head">
               <div>
@@ -892,6 +1073,19 @@ export default function App() {
                 </h2>
               </div>
               <div className="detail-head-actions">
+                {selectedOrder.customerId ? (
+                  <button
+                    className="secondary-button compact-action"
+                    type="button"
+                    onClick={() => {
+                      setSelectedCustomerId(selectedOrder.customerId);
+                      setActiveView("customers");
+                    }}
+                  >
+                    <UsersRound size={16} />
+                    <span>客户</span>
+                  </button>
+                ) : null}
                 <button className="secondary-button compact-action" type="button" onClick={() => openEditDialog(selectedOrder)}>
                   <Edit3 size={16} />
                   <span>编辑</span>
@@ -971,7 +1165,8 @@ export default function App() {
             <span>选择订单查看详情</span>
           </div>
         )}
-      </aside>
+        </aside>
+      ) : null}
 
       {contextMenu ? (
         <div
@@ -1592,6 +1787,136 @@ function StatusFilter({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function CustomersView({
+  customers,
+  onCopy,
+  onQueryChange,
+  onSelectCustomer,
+  onSelectOrder,
+  query,
+  selectedCustomer,
+  selectedCustomerId
+}: {
+  customers: CustomerProfile[];
+  onCopy: (label: string, value: string) => void;
+  onQueryChange: (value: string) => void;
+  onSelectCustomer: (customerId: string) => void;
+  onSelectOrder: (orderId: string) => void;
+  query: string;
+  selectedCustomer: CustomerDetail | null;
+  selectedCustomerId: string | null;
+}) {
+  return (
+    <>
+      <section className="toolbar" aria-label="客户筛选">
+        <label className="search-field">
+          <Search size={18} />
+          <input
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+            placeholder="搜索客户网名 / 微信 / 手机号 / 地址"
+          />
+        </label>
+      </section>
+
+      <section className="customers-panel" aria-label="客户资料库">
+        <div className="customer-list-panel">
+          {customers.length === 0 ? (
+            <div className="empty-state">
+              <UsersRound size={34} />
+              <span>暂无客户资料</span>
+            </div>
+          ) : (
+            customers.map((customer) => (
+              <div
+                className={`customer-card ${selectedCustomerId === customer.id ? "selected" : ""}`}
+                key={customer.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => onSelectCustomer(customer.id)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onSelectCustomer(customer.id);
+                  }
+                }}
+              >
+                <div className="customer-card-head">
+                  <strong>{customer.customerNickname || "未命名客户"}</strong>
+                  <span>{customer.orderCount} 单</span>
+                </div>
+                <div className="customer-card-lines">
+                  <span>{getCustomerIdentityLabel(customer)}</span>
+                  <span>{customer.customerPhone || "手机号未填"}</span>
+                </div>
+                <div className="customer-card-foot">
+                  <span>{customer.lastOrderTime ? formatDate(customer.lastOrderTime) : "暂无订单"}</span>
+                  <strong>{formatCurrency(customer.totalDesignFee)}</strong>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="customer-detail-panel">
+          {selectedCustomer ? (
+            <>
+              <div className="customer-profile-head">
+                <div>
+                  <p className="eyebrow">客户资料</p>
+                  <h2>{selectedCustomer.customerNickname || "未命名客户"}</h2>
+                </div>
+                <div className="customer-profile-total">
+                  <span>累计设计费</span>
+                  <strong>{formatCurrency(selectedCustomer.totalDesignFee)}</strong>
+                </div>
+              </div>
+
+              <div className="customer-info-grid">
+                <DetailItem label="客户网名" value={selectedCustomer.customerNickname || "未填写"} copyLabel="网名" onCopy={onCopy} />
+                <DetailItem label="客户微信" value={selectedCustomer.customerWechat || "未填写"} copyLabel="微信" onCopy={onCopy} />
+                <DetailItem label="手机号" value={selectedCustomer.customerPhone || "未填写"} copyLabel="手机号" onCopy={onCopy} />
+                <DetailItem label="收货地址" value={selectedCustomer.shippingAddress || "未填写"} copyLabel="地址" onCopy={onCopy} />
+                <DetailItem label="识别依据" value={getCustomerIdentityLabel(selectedCustomer)} />
+                <DetailItem label="订单数" value={`${selectedCustomer.orderCount} 单`} />
+                <DetailItem label="已完稿" value={`${selectedCustomer.completedOrderCount} 单`} />
+                <DetailItem label="最近下单" value={selectedCustomer.lastOrderTime ? formatDateTime(selectedCustomer.lastOrderTime) : "暂无订单"} />
+                <DetailItem label="资料更新" value={formatDateTime(selectedCustomer.updatedAt)} />
+              </div>
+
+              <div className="customer-history">
+                <div className="section-title">
+                  <h3>历史订单</h3>
+                  <span>{selectedCustomer.orders.length} 单</span>
+                </div>
+                {selectedCustomer.orders.length === 0 ? (
+                  <div className="file-empty">暂无历史订单</div>
+                ) : (
+                  selectedCustomer.orders.map((order) => (
+                    <button className="customer-order-row" key={order.id} type="button" onClick={() => onSelectOrder(order.id)}>
+                      <strong>{order.workOrderNo}</strong>
+                      <Badge>{order.category}</Badge>
+                      <span>{order.designSize || "未填尺寸"}</span>
+                      <StatusBadge status={order.status} />
+                      <span>{formatCurrency(order.designFee)}</span>
+                      <span>{formatDate(order.orderTime)}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="detail-empty">
+              <UsersRound size={36} />
+              <span>选择客户查看资料和历史订单</span>
+            </div>
+          )}
+        </div>
+      </section>
+    </>
   );
 }
 

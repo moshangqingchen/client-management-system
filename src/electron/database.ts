@@ -7,6 +7,9 @@ import { normalizeOrderStatus, type OrderStatus } from "../shared/statuses";
 import { normalizeOrderInput } from "../shared/validation";
 import type {
   ArchivedFile,
+  CustomerDetail,
+  CustomerLookupInput,
+  CustomerProfile,
   OrderDetail,
   OrderFile,
   OrderInput,
@@ -18,6 +21,7 @@ import type {
 
 interface OrderRow {
   id: string;
+  customer_id?: string | null;
   work_order_no: string;
   design_fee: number;
   category: string;
@@ -59,6 +63,20 @@ interface ArchivedFileRow extends FileRow {
   design_size?: string;
   order_status?: string;
   order_time: string;
+}
+
+interface CustomerRow {
+  id: string;
+  customer_nickname: string;
+  customer_wechat: string;
+  customer_phone: string;
+  shipping_address: string;
+  created_at: string;
+  updated_at: string;
+  order_count?: number;
+  completed_order_count?: number;
+  total_design_fee?: number;
+  last_order_time?: string | null;
 }
 
 export class OrderDatabase {
@@ -175,6 +193,63 @@ export class OrderDatabase {
     return rows.map(mapArchivedFile);
   }
 
+  listCustomers(): CustomerProfile[] {
+    this.syncCustomerProfiles();
+
+    const rows = this.db
+      .prepare(
+        `SELECT
+          c.*,
+          COUNT(CASE WHEN o.trashed_at IS NULL THEN o.id END) AS order_count,
+          COUNT(CASE WHEN o.trashed_at IS NULL AND o.status = 'finished_uploaded' THEN o.id END) AS completed_order_count,
+          COALESCE(SUM(CASE WHEN o.trashed_at IS NULL AND o.status = 'finished_uploaded' THEN o.design_fee ELSE 0 END), 0) AS total_design_fee,
+          MAX(CASE WHEN o.trashed_at IS NULL THEN o.order_time END) AS last_order_time
+        FROM customers c
+        LEFT JOIN orders o ON o.customer_id = c.id
+        GROUP BY c.id
+        ORDER BY datetime(last_order_time) DESC, datetime(c.updated_at) DESC`
+      )
+      .all() as unknown as CustomerRow[];
+
+    return rows.map(mapCustomer);
+  }
+
+  getCustomer(customerId: string): CustomerDetail | null {
+    this.syncCustomerProfiles();
+
+    const customer = this.listCustomers().find((item) => item.id === customerId);
+    if (!customer) return null;
+
+    const rows = this.db
+      .prepare(
+        `SELECT
+          o.*,
+          COUNT(f.id) AS file_count
+        FROM orders o
+        LEFT JOIN order_files f ON f.order_id = o.id
+        WHERE o.customer_id = ? AND o.trashed_at IS NULL
+        GROUP BY o.id
+        ORDER BY datetime(o.order_time) DESC, datetime(o.created_at) DESC`
+      )
+      .all(customerId) as unknown as OrderRow[];
+
+    return {
+      ...customer,
+      orders: rows.map((row) => ({
+        ...mapOrder(row),
+        fileCount: Number(row.file_count ?? 0)
+      }))
+    };
+  }
+
+  lookupCustomer(input: CustomerLookupInput): CustomerProfile | null {
+    this.syncCustomerProfiles();
+
+    const customer = this.findCustomerByIdentity(normalizeCustomerIdentity(input));
+    if (!customer) return null;
+    return this.listCustomers().find((item) => item.id === customer.id) ?? null;
+  }
+
   createOrder(input: OrderInput): OrderDetail {
     const normalized = normalizeOrderInput(input);
     const existing = this.db
@@ -187,11 +262,13 @@ export class OrderDatabase {
 
     const id = randomUUID();
     const now = new Date().toISOString();
+    const customerId = this.upsertCustomerProfile(normalized, now);
 
     this.db
       .prepare(
         `INSERT INTO orders (
           id,
+          customer_id,
           work_order_no,
           design_fee,
           category,
@@ -205,10 +282,11 @@ export class OrderDatabase {
           order_time,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
+        customerId,
         normalized.workOrderNo,
         normalized.designFee,
         normalized.category,
@@ -234,6 +312,7 @@ export class OrderDatabase {
     if (!current) throw new Error("订单不存在");
 
     const normalized = normalizeOrderInput(input);
+    const customerId = this.upsertCustomerProfile(normalized, new Date().toISOString());
     const existing = this.db
       .prepare("SELECT id FROM orders WHERE work_order_no = ? AND id <> ?")
       .get(normalized.workOrderNo, input.id) as unknown as { id: string } | undefined;
@@ -245,6 +324,7 @@ export class OrderDatabase {
     this.db
       .prepare(
         `UPDATE orders SET
+          customer_id = ?,
           work_order_no = ?,
           design_fee = ?,
           category = ?,
@@ -259,6 +339,7 @@ export class OrderDatabase {
         WHERE id = ?`
       )
       .run(
+        customerId,
         normalized.workOrderNo,
         normalized.designFee,
         normalized.category,
@@ -537,12 +618,120 @@ export class OrderDatabase {
     return path.join(this.filesRoot, sanitizeFileName(`${order.work_order_no}-${order.id.slice(0, 8)}`));
   }
 
+  private syncCustomerProfiles(): void {
+    const rows = this.db
+      .prepare("SELECT * FROM orders ORDER BY datetime(created_at) ASC, datetime(order_time) ASC")
+      .all() as unknown as OrderRow[];
+    const updateOrderCustomer = this.db.prepare("UPDATE orders SET customer_id = ? WHERE id = ?");
+
+    for (const row of rows) {
+      const customerId = this.upsertCustomerProfile(
+        {
+          customerNickname: row.customer_nickname,
+          customerWechat: row.customer_wechat,
+          customerPhone: row.customer_phone ?? "",
+          shippingAddress: row.shipping_address ?? ""
+        },
+        row.updated_at || new Date().toISOString()
+      );
+
+      if (customerId && row.customer_id !== customerId) {
+        updateOrderCustomer.run(customerId, row.id);
+      }
+    }
+  }
+
+  private upsertCustomerProfile(input: CustomerLookupInput & { shippingAddress?: string }, timestamp: string): string | null {
+    const identity = normalizeCustomerIdentity(input);
+    if (!identity.customerNickname && !identity.customerWechat && !identity.customerPhone) return null;
+
+    const current = this.findCustomerByIdentity(identity);
+    if (current) {
+      this.db
+        .prepare(
+          `UPDATE customers SET
+            customer_nickname = ?,
+            customer_wechat = ?,
+            customer_phone = ?,
+            shipping_address = ?,
+            updated_at = ?
+          WHERE id = ?`
+        )
+        .run(
+          identity.customerNickname || current.customer_nickname,
+          identity.customerWechat || current.customer_wechat,
+          identity.customerPhone || current.customer_phone,
+          identity.shippingAddress || current.shipping_address,
+          timestamp,
+          current.id
+        );
+
+      return current.id;
+    }
+
+    const id = randomUUID();
+    this.db
+      .prepare(
+        `INSERT INTO customers (
+          id,
+          customer_nickname,
+          customer_wechat,
+          customer_phone,
+          shipping_address,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        id,
+        identity.customerNickname,
+        identity.customerWechat,
+        identity.customerPhone,
+        identity.shippingAddress,
+        timestamp,
+        timestamp
+      );
+
+    return id;
+  }
+
+  private findCustomerByIdentity(input: CustomerLookupInput & { shippingAddress?: string }): CustomerRow | null {
+    const identity = normalizeCustomerIdentity(input);
+    const findByWechat = this.db.prepare(
+      "SELECT * FROM customers WHERE customer_wechat <> '' AND lower(customer_wechat) = lower(?) ORDER BY datetime(updated_at) DESC LIMIT 1"
+    );
+    const findByPhone = this.db.prepare(
+      "SELECT * FROM customers WHERE customer_phone <> '' AND customer_phone = ? ORDER BY datetime(updated_at) DESC LIMIT 1"
+    );
+    const findByNickname = this.db.prepare(
+      "SELECT * FROM customers WHERE customer_nickname <> '' AND customer_nickname = ? ORDER BY datetime(updated_at) DESC LIMIT 1"
+    );
+
+    if (identity.customerWechat) {
+      const row = findByWechat.get(identity.customerWechat) as unknown as CustomerRow | undefined;
+      if (row) return row;
+    }
+
+    if (identity.customerPhone) {
+      const row = findByPhone.get(identity.customerPhone) as unknown as CustomerRow | undefined;
+      if (row) return row;
+    }
+
+    if (identity.customerNickname) {
+      const row = findByNickname.get(identity.customerNickname) as unknown as CustomerRow | undefined;
+      if (row) return row;
+    }
+
+    return null;
+  }
+
   private initialize(): void {
     this.db.exec(`
       PRAGMA foreign_keys = ON;
 
       CREATE TABLE IF NOT EXISTS orders (
         id TEXT PRIMARY KEY,
+        customer_id TEXT,
         work_order_no TEXT NOT NULL UNIQUE,
         design_fee REAL NOT NULL DEFAULT 0,
         category TEXT NOT NULL,
@@ -561,6 +750,16 @@ export class OrderDatabase {
         updated_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS customers (
+        id TEXT PRIMARY KEY,
+        customer_nickname TEXT NOT NULL DEFAULT '',
+        customer_wechat TEXT NOT NULL DEFAULT '',
+        customer_phone TEXT NOT NULL DEFAULT '',
+        shipping_address TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS order_files (
         id TEXT PRIMARY KEY,
         order_id TEXT NOT NULL,
@@ -574,15 +773,21 @@ export class OrderDatabase {
       );
 
       CREATE INDEX IF NOT EXISTS idx_orders_order_time ON orders(order_time);
+      CREATE INDEX IF NOT EXISTS idx_customers_wechat ON customers(customer_wechat);
+      CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(customer_phone);
+      CREATE INDEX IF NOT EXISTS idx_customers_nickname ON customers(customer_nickname);
       CREATE INDEX IF NOT EXISTS idx_files_order_id ON order_files(order_id);
     `);
     this.migrate();
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_orders_customer_id ON orders(customer_id);");
+    this.syncCustomerProfiles();
   }
 
   private migrate(): void {
     const columns = this.db.prepare("PRAGMA table_info(orders)").all() as unknown as Array<{ name: string }>;
     const names = new Set(columns.map((column) => column.name));
     const migrations = [
+      ["customer_id", "ALTER TABLE orders ADD COLUMN customer_id TEXT"],
       ["status", "ALTER TABLE orders ADD COLUMN status TEXT NOT NULL DEFAULT 'none'"],
       ["design_size", "ALTER TABLE orders ADD COLUMN design_size TEXT NOT NULL DEFAULT ''"],
       ["customer_phone", "ALTER TABLE orders ADD COLUMN customer_phone TEXT NOT NULL DEFAULT ''"],
@@ -604,6 +809,7 @@ export class OrderDatabase {
 function mapOrder(row: OrderRow): OrderRecord {
   return {
     id: row.id,
+    customerId: row.customer_id ?? null,
     workOrderNo: row.work_order_no,
     designFee: Number(row.design_fee),
     category: row.category,
@@ -620,6 +826,33 @@ function mapOrder(row: OrderRow): OrderRecord {
     orderTime: row.order_time,
     createdAt: row.created_at,
     updatedAt: row.updated_at
+  };
+}
+
+function mapCustomer(row: CustomerRow): CustomerProfile {
+  return {
+    id: row.id,
+    customerNickname: row.customer_nickname,
+    customerWechat: row.customer_wechat,
+    customerPhone: row.customer_phone,
+    shippingAddress: row.shipping_address,
+    orderCount: Number(row.order_count ?? 0),
+    completedOrderCount: Number(row.completed_order_count ?? 0),
+    totalDesignFee: Number(row.total_design_fee ?? 0),
+    lastOrderTime: row.last_order_time ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function normalizeCustomerIdentity(input: CustomerLookupInput & { shippingAddress?: string }): Required<CustomerLookupInput> & {
+  shippingAddress: string;
+} {
+  return {
+    customerNickname: input.customerNickname?.trim() ?? "",
+    customerWechat: input.customerWechat?.trim() ?? "",
+    customerPhone: input.customerPhone?.trim() ?? "",
+    shippingAddress: input.shippingAddress?.trim() ?? ""
   };
 }
 

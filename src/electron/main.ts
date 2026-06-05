@@ -3,10 +3,23 @@ import path from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from "electron";
 import { OrderDatabase } from "./database";
 import type { OrderStatus } from "../shared/statuses";
-import type { OrderInput, OrderUpdateInput } from "../shared/types";
+import type { CustomerLookupInput, OrderInput, OrderUpdateInput } from "../shared/types";
 
 let mainWindow: BrowserWindow | null = null;
 let database: OrderDatabase | null = null;
+const appId = "com.moshangqingchen.client-management-system";
+
+function writeStartupLog(message: string): void {
+  try {
+    const logPath =
+      process.env.DESIGN_ORDER_MANAGER_DEBUG_LOG ||
+      path.join(app.getPath("userData"), "startup-debug.log");
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+    fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${message}\n`, "utf8");
+  } catch {
+    // Startup diagnostics must never block app launch.
+  }
+}
 
 function getDatabase(): OrderDatabase {
   if (!database) throw new Error("数据库尚未初始化");
@@ -21,12 +34,32 @@ function getAssetPath(fileName: string): string {
   return path.join(__dirname, "../../assets", fileName);
 }
 
+function showMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  try {
+    writeStartupLog(
+      `show begin visible=${mainWindow.isVisible()} minimized=${mainWindow.isMinimized()} bounds=${JSON.stringify(
+        mainWindow.getBounds()
+      )}`
+    );
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    if (!mainWindow.isVisible()) mainWindow.show();
+    mainWindow.moveTop();
+    mainWindow.focus();
+    writeStartupLog(`show end visible=${mainWindow.isVisible()} focused=${mainWindow.isFocused()}`);
+  } catch (error) {
+    writeStartupLog(`show error=${error instanceof Error ? error.stack ?? error.message : String(error)}`);
+  }
+}
+
 function createWindow(): void {
+  writeStartupLog("createWindow begin");
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 920,
     minWidth: 1180,
     minHeight: 760,
+    show: true,
     title: "客户订单管理系统",
     backgroundColor: "#111315",
     icon: getAssetPath("app-icon-design-blue-gpt-image-2.ico"),
@@ -37,15 +70,40 @@ function createWindow(): void {
       sandbox: false
     }
   });
+  writeStartupLog(`createWindow after BrowserWindow visible=${mainWindow.isVisible()}`);
+
+  let revealTimer: ReturnType<typeof setTimeout> | null = setTimeout(showMainWindow, 1500);
+  const revealWindow = () => {
+    if (revealTimer) {
+      clearTimeout(revealTimer);
+      revealTimer = null;
+    }
+    showMainWindow();
+  };
+
+  mainWindow.once("ready-to-show", () => {
+    writeStartupLog("event ready-to-show");
+    revealWindow();
+  });
+  mainWindow.webContents.once("did-finish-load", () => {
+    writeStartupLog("event did-finish-load");
+    revealWindow();
+  });
+  mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription) => {
+    writeStartupLog(`event did-fail-load code=${errorCode} description=${errorDescription}`);
+  });
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    writeStartupLog(`event render-process-gone reason=${details.reason} exitCode=${details.exitCode}`);
+  });
 
   const devServerUrl = process.env.VITE_DEV_SERVER_URL;
   if (devServerUrl) {
-    void mainWindow.loadURL(devServerUrl);
+    void mainWindow.loadURL(devServerUrl).catch((error) => console.error("加载开发页面失败", error));
   } else {
-    void mainWindow.loadFile(path.join(__dirname, "../../dist/index.html"));
+    void mainWindow.loadFile(path.join(__dirname, "../../dist/index.html")).catch((error) => console.error("加载应用页面失败", error));
   }
-
   mainWindow.on("closed", () => {
+    if (revealTimer) clearTimeout(revealTimer);
     mainWindow = null;
   });
 }
@@ -54,6 +112,9 @@ function registerIpc(): void {
   ipcMain.handle("orders:list", () => getDatabase().listOrders());
   ipcMain.handle("orders:list-trashed", () => getDatabase().listTrashedOrders());
   ipcMain.handle("orders:get", (_event, orderId: string) => getDatabase().getOrder(orderId));
+  ipcMain.handle("customers:list", () => getDatabase().listCustomers());
+  ipcMain.handle("customers:get", (_event, customerId: string) => getDatabase().getCustomer(customerId));
+  ipcMain.handle("customers:lookup", (_event, input: CustomerLookupInput) => getDatabase().lookupCustomer(input));
   ipcMain.handle("orders:create", (_event, input: OrderInput) => getDatabase().createOrder(input));
   ipcMain.handle("orders:update", (_event, input: OrderUpdateInput) => getDatabase().updateOrder(input));
   ipcMain.handle("orders:update-status", (_event, orderId: string, status: OrderStatus) =>
@@ -160,15 +221,39 @@ function registerIpc(): void {
   });
 }
 
-app.whenReady().then(() => {
-  database = new OrderDatabase(app.getPath("userData"));
-  registerIpc();
-  createWindow();
+writeStartupLog("main module start");
+app.setAppUserModelId(appId);
+writeStartupLog("app user model id set");
 
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
-  });
-});
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+writeStartupLog(`single instance lock=${hasSingleInstanceLock}`);
+
+if (!hasSingleInstanceLock) {
+  writeStartupLog("single instance lock failed, quitting");
+  app.quit();
+} else {
+  app.on("second-instance", showMainWindow);
+
+  writeStartupLog("waiting for app ready");
+  app.whenReady()
+    .then(() => {
+      writeStartupLog("app ready");
+      database = new OrderDatabase(app.getPath("userData"));
+      writeStartupLog("database initialized");
+      registerIpc();
+      writeStartupLog("ipc registered");
+      createWindow();
+
+      app.on("activate", () => {
+        writeStartupLog("event activate");
+        if (BrowserWindow.getAllWindows().length === 0) createWindow();
+        showMainWindow();
+      });
+    })
+    .catch((error) => {
+      writeStartupLog(`app ready failed=${error instanceof Error ? error.stack ?? error.message : String(error)}`);
+    });
+}
 
 async function imagePathToDataUrl(filePath: string): Promise<string | null> {
   const extension = path.extname(filePath).slice(1).toLowerCase();

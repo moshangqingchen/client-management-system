@@ -21,6 +21,7 @@ export interface OrderUpdateInput extends OrderInput {
 
 export interface OrderRecord {
   id: string;
+  customerId: string | null;
   workOrderNo: string;
   designFee: number;
   category: string;
@@ -66,6 +67,30 @@ export interface ArchivedFile extends OrderFile {
   designSize: string;
   orderStatus: OrderStatus;
   orderTime: string;
+}
+
+export interface CustomerLookupInput {
+  customerNickname?: string;
+  customerWechat?: string;
+  customerPhone?: string;
+}
+
+export interface CustomerProfile {
+  id: string;
+  customerNickname: string;
+  customerWechat: string;
+  customerPhone: string;
+  shippingAddress: string;
+  orderCount: number;
+  completedOrderCount: number;
+  totalDesignFee: number;
+  lastOrderTime: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CustomerDetail extends CustomerProfile {
+  orders: OrderSummary[];
 }
 
 export interface StorageInfo {
