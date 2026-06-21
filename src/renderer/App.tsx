@@ -45,7 +45,6 @@ import type {
   StorageBackupResult,
   StorageInfo
 } from "../shared/types";
-import welcomeKittenUrl from "./assets/welcome-kitten.png";
 
 interface OrderFormState {
   workOrderNo: string;
@@ -226,8 +225,6 @@ export default function App() {
   const [isUpdatingApp, setUpdatingApp] = useState(false);
   const [isDragging, setDragging] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
-  const [isIntroVisible, setIntroVisible] = useState(true);
-  const [isIntroClosing, setIntroClosing] = useState(false);
   const lastCustomerLookupKey = useRef("");
 
   useEffect(() => {
@@ -237,16 +234,6 @@ export default function App() {
     void refreshQuickPhrases();
     void refreshStorageInfo();
     void checkAppUpdateOnStart();
-  }, []);
-
-  useEffect(() => {
-    const closeTimer = window.setTimeout(() => setIntroClosing(true), 1750);
-    const removeTimer = window.setTimeout(() => setIntroVisible(false), 2300);
-
-    return () => {
-      window.clearTimeout(closeTimer);
-      window.clearTimeout(removeTimer);
-    };
   }, []);
 
   useEffect(() => {
@@ -1153,8 +1140,7 @@ export default function App() {
   }
 
   return (
-    <>
-      <div className={`app-shell ${activeView === "orders" ? "" : "app-shell-no-detail"} ${isIntroVisible ? "app-shell-opening" : ""}`}>
+    <div className={`app-shell ${activeView === "orders" ? "" : "app-shell-no-detail"}`}>
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">设</div>
@@ -1677,33 +1663,7 @@ export default function App() {
         />
       ) : null}
 
-        {toast ? <div className="toast">{toast}</div> : null}
-      </div>
-
-      {isIntroVisible ? <WelcomeIntro isClosing={isIntroClosing} /> : null}
-    </>
-  );
-}
-
-function WelcomeIntro({ isClosing }: { isClosing: boolean }) {
-  return (
-    <div className={`welcome-intro ${isClosing ? "closing" : ""}`} role="status" aria-label="欢迎使用">
-      <div className="welcome-rays" aria-hidden="true" />
-      <div className="welcome-stage">
-        <div className="welcome-letters" aria-hidden="true">
-          <span className="welcome-letter letter-one">欢</span>
-          <span className="welcome-letter letter-two">迎</span>
-          <span className="welcome-letter letter-three">使</span>
-          <span className="welcome-letter letter-four">用</span>
-        </div>
-
-        <div className="kitten-pop">
-          <img className="welcome-kitten-image" src={welcomeKittenUrl} alt="" aria-hidden="true" />
-        </div>
-
-        <div className="welcome-shadow" aria-hidden="true" />
-        <div className="welcome-caption">欢迎使用</div>
-      </div>
+      {toast ? <div className="toast">{toast}</div> : null}
     </div>
   );
 }
