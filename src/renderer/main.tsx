@@ -16,6 +16,10 @@ function createBrowserPreviewOrderApi(): OrderApi {
     listCustomers: async () => [],
     getCustomer: async () => null,
     lookupCustomer: async () => null,
+    listQuickPhrases: async () => [],
+    createQuickPhrase: unavailable,
+    updateQuickPhrase: unavailable,
+    deleteQuickPhrase: async () => false,
     createOrder: unavailable,
     updateOrder: unavailable,
     updateOrderStatus: unavailable,
@@ -38,7 +42,22 @@ function createBrowserPreviewOrderApi(): OrderApi {
     copyText: (value) => {
       void navigator.clipboard?.writeText(value).catch(() => undefined);
     },
-    getStorageInfo: async () => ({ databasePath: "浏览器预览", filesRoot: "浏览器预览" })
+    getStorageInfo: async () => ({
+      appVersion: "浏览器预览",
+      dataRoot: "浏览器预览",
+      databasePath: "浏览器预览",
+      databaseSize: 0,
+      filesRoot: "浏览器预览",
+      filesSize: 0,
+      fileCount: 0
+    }),
+    openDataRoot: unavailable,
+    openFilesRoot: unavailable,
+    revealDatabase: unavailable,
+    exportBackup: unavailable,
+    openBackupFolder: unavailable,
+    checkAppUpdate: async () => null,
+    updateAppFromFolder: unavailable
   };
 }
 

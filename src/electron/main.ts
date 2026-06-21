@@ -1,9 +1,18 @@
 import fs from "node:fs";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from "electron";
 import { OrderDatabase } from "./database";
 import type { OrderStatus } from "../shared/statuses";
-import type { CustomerLookupInput, OrderInput, OrderUpdateInput } from "../shared/types";
+import type {
+  AppUpdateInfo,
+  AppUpdateResult,
+  CustomerLookupInput,
+  OrderInput,
+  OrderUpdateInput,
+  QuickPhraseInput,
+  QuickPhraseUpdateInput
+} from "../shared/types";
 
 let mainWindow: BrowserWindow | null = null;
 let database: OrderDatabase | null = null;
@@ -34,18 +43,30 @@ function getAssetPath(fileName: string): string {
   return path.join(__dirname, "../../assets", fileName);
 }
 
-function showMainWindow(): void {
+function showMainWindow(options: { forceForeground?: boolean; reason?: string } = {}): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   try {
     writeStartupLog(
-      `show begin visible=${mainWindow.isVisible()} minimized=${mainWindow.isMinimized()} bounds=${JSON.stringify(
+      `show begin reason=${options.reason ?? "default"} visible=${mainWindow.isVisible()} minimized=${mainWindow.isMinimized()} bounds=${JSON.stringify(
         mainWindow.getBounds()
       )}`
     );
+    if (options.forceForeground) {
+      mainWindow.setSkipTaskbar(false);
+      mainWindow.setAlwaysOnTop(true, "screen-saver");
+    }
     if (mainWindow.isMinimized()) mainWindow.restore();
-    if (!mainWindow.isVisible()) mainWindow.show();
+    mainWindow.show();
     mainWindow.moveTop();
     mainWindow.focus();
+    if (options.forceForeground) {
+      if (!mainWindow.isFocused()) mainWindow.flashFrame(true);
+      setTimeout(() => {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        mainWindow.setAlwaysOnTop(false);
+        mainWindow.flashFrame(false);
+      }, 900);
+    }
     writeStartupLog(`show end visible=${mainWindow.isVisible()} focused=${mainWindow.isFocused()}`);
   } catch (error) {
     writeStartupLog(`show error=${error instanceof Error ? error.stack ?? error.message : String(error)}`);
@@ -115,6 +136,10 @@ function registerIpc(): void {
   ipcMain.handle("customers:list", () => getDatabase().listCustomers());
   ipcMain.handle("customers:get", (_event, customerId: string) => getDatabase().getCustomer(customerId));
   ipcMain.handle("customers:lookup", (_event, input: CustomerLookupInput) => getDatabase().lookupCustomer(input));
+  ipcMain.handle("quick-phrases:list", () => getDatabase().listQuickPhrases());
+  ipcMain.handle("quick-phrases:create", (_event, input: QuickPhraseInput) => getDatabase().createQuickPhrase(input));
+  ipcMain.handle("quick-phrases:update", (_event, input: QuickPhraseUpdateInput) => getDatabase().updateQuickPhrase(input));
+  ipcMain.handle("quick-phrases:delete", (_event, phraseId: string) => getDatabase().deleteQuickPhrase(phraseId));
   ipcMain.handle("orders:create", (_event, input: OrderInput) => getDatabase().createOrder(input));
   ipcMain.handle("orders:update", (_event, input: OrderUpdateInput) => getDatabase().updateOrder(input));
   ipcMain.handle("orders:update-status", (_event, orderId: string, status: OrderStatus) =>
@@ -167,6 +192,51 @@ function registerIpc(): void {
     return true;
   });
   ipcMain.handle("storage:info", () => getDatabase().getStorageInfo());
+  ipcMain.handle("storage:open-data-root", async () => {
+    const error = await shell.openPath(getDatabase().getStorageInfo().dataRoot);
+    if (error) throw new Error(error);
+    return true;
+  });
+  ipcMain.handle("storage:open-files-root", async () => {
+    const error = await shell.openPath(getDatabase().getStorageInfo().filesRoot);
+    if (error) throw new Error(error);
+    return true;
+  });
+  ipcMain.handle("storage:reveal-database", () => {
+    shell.showItemInFolder(getDatabase().getStorageInfo().databasePath);
+    return true;
+  });
+  ipcMain.handle("storage:export-backup", async () => {
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, {
+          title: "选择备份保存位置",
+          properties: ["openDirectory", "createDirectory"]
+        })
+      : await dialog.showOpenDialog({
+          title: "选择备份保存位置",
+          properties: ["openDirectory", "createDirectory"]
+        });
+
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return getDatabase().exportBackup(result.filePaths[0]);
+  });
+  ipcMain.handle("storage:open-backup-folder", async (_event, backupPath: string) => {
+    if (!backupPath || typeof backupPath !== "string") throw new Error("备份目录无效");
+    const resolvedBackupPath = path.resolve(backupPath);
+    const marker = path.join(resolvedBackupPath, "backup-info.json");
+    const markerStats = await fs.promises.stat(marker).catch(() => null);
+    if (!markerStats?.isFile()) throw new Error("未找到备份说明文件");
+
+    const error = await shell.openPath(resolvedBackupPath);
+    if (error) throw new Error(error);
+    return true;
+  });
+  ipcMain.handle("app:check-update", (_event, sourceFolder?: string) => checkAppUpdate(sourceFolder));
+  ipcMain.handle("app:update-from-folder", async (_event, sourceFolder?: string) => {
+    const folder = sourceFolder?.trim() || (await pickUpdateFolder());
+    if (!folder) return null;
+    return scheduleUpdateFromFolder(folder);
+  });
   ipcMain.handle("files:list", () => getDatabase().listFiles());
 
   ipcMain.handle("files:add", async (_event, orderId: string, sourcePaths: string[]) => {
@@ -232,13 +302,13 @@ if (!hasSingleInstanceLock) {
   writeStartupLog("single instance lock failed, quitting");
   app.quit();
 } else {
-  app.on("second-instance", showMainWindow);
+  app.on("second-instance", () => showMainWindow({ forceForeground: true, reason: "second-instance" }));
 
   writeStartupLog("waiting for app ready");
   app.whenReady()
     .then(() => {
       writeStartupLog("app ready");
-      database = new OrderDatabase(app.getPath("userData"));
+      database = new OrderDatabase(app.getPath("userData"), app.getVersion());
       writeStartupLog("database initialized");
       registerIpc();
       writeStartupLog("ipc registered");
@@ -253,6 +323,194 @@ if (!hasSingleInstanceLock) {
     .catch((error) => {
       writeStartupLog(`app ready failed=${error instanceof Error ? error.stack ?? error.message : String(error)}`);
     });
+}
+
+async function pickUpdateFolder(): Promise<string | null> {
+  const result = mainWindow
+    ? await dialog.showOpenDialog(mainWindow, {
+        title: "选择新版 win-unpacked 文件夹",
+        properties: ["openDirectory"]
+      })
+    : await dialog.showOpenDialog({
+        title: "选择新版 win-unpacked 文件夹",
+        properties: ["openDirectory"]
+      });
+
+  if (result.canceled || result.filePaths.length === 0) return null;
+  return result.filePaths[0];
+}
+
+async function checkAppUpdate(sourceFolder?: string): Promise<AppUpdateInfo | null> {
+  if (!app.isPackaged) return null;
+
+  const sourcePath = await resolveUpdateSourcePath(sourceFolder);
+  if (!sourcePath) return null;
+
+  const updateInfo = await getUpdateInfoFromSource(sourcePath);
+  if (sourceFolder?.trim()) {
+    await saveUpdateSourcePath(sourcePath).catch(() => undefined);
+  }
+  return updateInfo;
+}
+
+async function scheduleUpdateFromFolder(sourceFolder: string): Promise<AppUpdateResult> {
+  if (!app.isPackaged) {
+    throw new Error("本地调试模式不需要应用更新，请直接重新运行开发命令");
+  }
+
+  const sourcePath = path.resolve(sourceFolder);
+  const updateInfo = await getUpdateInfoFromSource(sourcePath);
+  if (isPathSame(updateInfo.sourcePath, updateInfo.targetPath)) {
+    throw new Error("选择的新版目录就是当前程序目录，不需要更新");
+  }
+  await saveUpdateSourcePath(updateInfo.sourcePath).catch(() => undefined);
+
+  const targetExePath = path.join(updateInfo.targetPath, path.basename(process.execPath));
+  const scriptPath = path.join(app.getPath("temp"), `design-order-manager-update-${Date.now()}.ps1`);
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    `$source = ${toPowerShellString(updateInfo.sourcePath)}`,
+    `$target = ${toPowerShellString(updateInfo.targetPath)}`,
+    `$exe = ${toPowerShellString(targetExePath)}`,
+    `$pidToWait = ${process.pid}`,
+    "Wait-Process -Id $pidToWait -ErrorAction SilentlyContinue",
+    "Start-Sleep -Milliseconds 800",
+    "Get-ChildItem -LiteralPath $source -Force | ForEach-Object {",
+    "  Copy-Item -LiteralPath $_.FullName -Destination $target -Recurse -Force",
+    "}",
+    "Start-Process -FilePath $exe"
+  ].join("\n");
+
+  await fs.promises.writeFile(scriptPath, script, "utf8");
+  const child = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath], {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true
+  });
+  child.unref();
+
+  setTimeout(() => app.quit(), 350);
+
+  return {
+    sourcePath: updateInfo.sourcePath,
+    targetPath: updateInfo.targetPath,
+    currentVersion: updateInfo.currentVersion,
+    sourceVersion: updateInfo.sourceVersion
+  };
+}
+
+async function getUpdateInfoFromSource(sourceFolder: string): Promise<AppUpdateInfo> {
+  const sourcePath = path.resolve(sourceFolder);
+  const targetPath = path.dirname(process.execPath);
+  const exeName = path.basename(process.execPath);
+  const sourceExePath = path.join(sourcePath, exeName);
+  const sourcePackagePath = path.join(sourcePath, "resources", "app", "package.json");
+
+  const sourceExeStats = await fs.promises.stat(sourceExePath).catch(() => null);
+  const sourcePackageStats = await fs.promises.stat(sourcePackagePath).catch(() => null);
+  if (!sourceExeStats?.isFile() || !sourcePackageStats?.isFile()) {
+    throw new Error("请选择打包后的 win-unpacked 文件夹");
+  }
+
+  const currentExeStats = await fs.promises.stat(process.execPath).catch(() => null);
+  const sourceManifest = await readUpdateManifest(sourcePath);
+  const currentManifest = await readUpdateManifest(targetPath);
+  const sourceVersion = sourceManifest.version || (await readPackageVersion(sourcePackagePath));
+  const currentVersion = app.getVersion();
+  const sourceBuildTime = sourceManifest.buildTime ?? sourceExeStats.mtime.toISOString();
+  const currentBuildTime = currentManifest.buildTime ?? currentExeStats?.mtime.toISOString() ?? null;
+  const hasUpdate =
+    !isPathSame(sourcePath, targetPath) &&
+    (sourceVersion !== currentVersion || sourceExeStats.mtimeMs > (currentExeStats?.mtimeMs ?? 0) + 1000);
+
+  return {
+    sourcePath,
+    targetPath,
+    currentVersion,
+    sourceVersion,
+    hasUpdate,
+    currentBuildTime,
+    sourceBuildTime,
+    releaseNotes: sourceManifest.notes.length > 0 ? sourceManifest.notes : ["包含最新功能、界面调整和问题修复"]
+  };
+}
+
+async function resolveUpdateSourcePath(sourceFolder?: string): Promise<string | null> {
+  if (sourceFolder?.trim()) return path.resolve(sourceFolder);
+
+  const saved = await readSavedUpdateSourcePath();
+  const candidates = [
+    saved,
+    "D:\\project development\\设计客户管理系统\\release\\win-unpacked"
+  ].filter((candidate): candidate is string => Boolean(candidate));
+
+  for (const candidate of candidates) {
+    const stats = await fs.promises.stat(candidate).catch(() => null);
+    if (stats?.isDirectory()) return path.resolve(candidate);
+  }
+
+  return null;
+}
+
+function getUpdateConfigPath(): string {
+  return path.join(app.getPath("userData"), "design-order-manager", "update-source.json");
+}
+
+async function readSavedUpdateSourcePath(): Promise<string | null> {
+  try {
+    const content = await fs.promises.readFile(getUpdateConfigPath(), "utf8");
+    const parsed = JSON.parse(content) as { sourcePath?: unknown };
+    return typeof parsed.sourcePath === "string" && parsed.sourcePath.trim() ? parsed.sourcePath : null;
+  } catch {
+    return null;
+  }
+}
+
+async function saveUpdateSourcePath(sourcePath: string): Promise<void> {
+  const configPath = getUpdateConfigPath();
+  await fs.promises.mkdir(path.dirname(configPath), { recursive: true });
+  await fs.promises.writeFile(configPath, JSON.stringify({ sourcePath }, null, 2), "utf8");
+}
+
+async function readUpdateManifest(appDirectory: string): Promise<{ version: string; buildTime: string | null; notes: string[] }> {
+  const candidates = [
+    path.join(appDirectory, "resources", "app", "dist", "update-manifest.json"),
+    path.join(appDirectory, "resources", "app", "update-manifest.json")
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      const content = await fs.promises.readFile(candidate, "utf8");
+      const parsed = JSON.parse(content) as { version?: unknown; buildTime?: unknown; notes?: unknown };
+      return {
+        version: typeof parsed.version === "string" ? parsed.version : "",
+        buildTime: typeof parsed.buildTime === "string" ? parsed.buildTime : null,
+        notes: Array.isArray(parsed.notes) ? parsed.notes.filter((note): note is string => typeof note === "string") : []
+      };
+    } catch {
+      // Try the next manifest location.
+    }
+  }
+
+  return { version: "", buildTime: null, notes: [] };
+}
+
+async function readPackageVersion(packagePath: string): Promise<string> {
+  try {
+    const content = await fs.promises.readFile(packagePath, "utf8");
+    const parsed = JSON.parse(content) as { version?: unknown };
+    return typeof parsed.version === "string" ? parsed.version : "未知版本";
+  } catch {
+    return "未知版本";
+  }
+}
+
+function toPowerShellString(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+function isPathSame(left: string, right: string): boolean {
+  return path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase();
 }
 
 async function imagePathToDataUrl(filePath: string): Promise<string | null> {

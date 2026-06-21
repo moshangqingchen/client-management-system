@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import {
   AlertTriangle,
   Archive,
@@ -6,11 +6,13 @@ import {
   CheckCircle2,
   ChevronRight,
   Copy,
+  Database,
   Edit3,
   FileArchive,
   FileImage,
   FileText,
   FolderOpen,
+  HardDrive,
   Layers3,
   MapPin,
   Phone,
@@ -19,6 +21,7 @@ import {
   ReceiptText,
   RefreshCw,
   Search,
+  ShieldCheck,
   Sparkles,
   Trash2,
   UploadCloud,
@@ -29,7 +32,19 @@ import {
 import { DESIGN_CATEGORIES } from "../shared/categories";
 import { getOrderStatusOption, ORDER_STATUS_OPTIONS, type OrderStatus } from "../shared/statuses";
 import { validateOrderInput, type OrderFormErrors } from "../shared/validation";
-import type { ArchivedFile, CustomerDetail, CustomerProfile, OrderDetail, OrderFile, OrderInput, OrderSummary } from "../shared/types";
+import type {
+  AppUpdateInfo,
+  ArchivedFile,
+  CustomerDetail,
+  CustomerProfile,
+  OrderDetail,
+  OrderFile,
+  OrderInput,
+  OrderSummary,
+  QuickPhrase,
+  StorageBackupResult,
+  StorageInfo
+} from "../shared/types";
 import welcomeKittenUrl from "./assets/welcome-kitten.png";
 
 interface OrderFormState {
@@ -43,6 +58,11 @@ interface OrderFormState {
   shippingAddress: string;
   trackingNumber: string;
   orderTime: string;
+}
+
+interface QuickPhraseFormState {
+  title: string;
+  content: string;
 }
 
 interface ContextMenuState {
@@ -60,8 +80,10 @@ interface RecognizedCustomerInfo {
   designSize?: string;
 }
 
-type ActiveView = "orders" | "customers" | "archive" | "trash" | "fees";
+type ActiveView = "orders" | "customers" | "quickPhrases" | "archive" | "trash" | "fees" | "data";
 type StatusFilterValue = "all" | OrderStatus;
+type OrderQuickFilter = "all" | "today" | "wechat_pending" | "designing" | "finished_uploaded";
+type OrderDisplayMode = "table" | "board";
 
 const allCategoryLabel = "全部";
 const categoryFilters = [allCategoryLabel, ...DESIGN_CATEGORIES];
@@ -73,6 +95,7 @@ const statusFilterOptions: Array<{
   { value: "all", label: "全部标记", tone: "neutral" },
   ...ORDER_STATUS_OPTIONS.filter((option) => option.value !== "none")
 ];
+const boardStatusColumns = ORDER_STATUS_OPTIONS.filter((option) => option.value !== "none");
 const contextMenuWidth = 220;
 const contextMenuEstimatedHeight = 326;
 const contextMenuMargin = 12;
@@ -162,6 +185,10 @@ export default function App() {
   const [trashedOrders, setTrashedOrders] = useState<OrderSummary[]>([]);
   const [archivedFiles, setArchivedFiles] = useState<ArchivedFile[]>([]);
   const [customers, setCustomers] = useState<CustomerProfile[]>([]);
+  const [quickPhrases, setQuickPhrases] = useState<QuickPhrase[]>([]);
+  const [storageInfo, setStorageInfo] = useState<StorageInfo | null>(null);
+  const [lastBackupResult, setLastBackupResult] = useState<StorageBackupResult | null>(null);
+  const [availableUpdate, setAvailableUpdate] = useState<AppUpdateInfo | null>(null);
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerDetail | null>(null);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
@@ -170,14 +197,18 @@ export default function App() {
   const [trashQuery, setTrashQuery] = useState("");
   const [archiveQuery, setArchiveQuery] = useState("");
   const [customerQuery, setCustomerQuery] = useState("");
+  const [quickPhraseQuery, setQuickPhraseQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState(allCategoryLabel);
   const [statusFilter, setStatusFilter] = useState<StatusFilterValue>("all");
+  const [orderDisplayMode, setOrderDisplayMode] = useState<OrderDisplayMode>("table");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [dialogMode, setDialogMode] = useState<"create" | "edit" | null>(null);
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
+  const [editingQuickPhraseId, setEditingQuickPhraseId] = useState<string | null>(null);
   const [smartText, setSmartText] = useState("");
   const [form, setForm] = useState<OrderFormState>(() => createEmptyForm());
+  const [quickPhraseForm, setQuickPhraseForm] = useState<QuickPhraseFormState>({ title: "", content: "" });
   const [formErrors, setFormErrors] = useState<OrderFormErrors>({});
   const [pendingWechatQrSourcePath, setPendingWechatQrSourcePath] = useState("");
   const [pendingWechatQrName, setPendingWechatQrName] = useState("");
@@ -187,8 +218,12 @@ export default function App() {
   const [isSaving, setSaving] = useState(false);
   const [isDeleting, setDeleting] = useState(false);
   const [isPermanentlyDeleting, setPermanentlyDeleting] = useState(false);
+  const [isSavingQuickPhrase, setSavingQuickPhrase] = useState(false);
   const [isUploading, setUploading] = useState(false);
   const [isQrUploading, setQrUploading] = useState(false);
+  const [isExportingBackup, setExportingBackup] = useState(false);
+  const [isCheckingUpdate, setCheckingUpdate] = useState(false);
+  const [isUpdatingApp, setUpdatingApp] = useState(false);
   const [isDragging, setDragging] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [isIntroVisible, setIntroVisible] = useState(true);
@@ -199,6 +234,9 @@ export default function App() {
     void refreshOrders();
     void refreshTrashedOrders();
     void refreshCustomers();
+    void refreshQuickPhrases();
+    void refreshStorageInfo();
+    void checkAppUpdateOnStart();
   }, []);
 
   useEffect(() => {
@@ -220,6 +258,12 @@ export default function App() {
     }
     if (activeView === "customers") {
       void refreshCustomers();
+    }
+    if (activeView === "quickPhrases") {
+      void refreshQuickPhrases();
+    }
+    if (activeView === "data") {
+      void refreshStorageInfo();
     }
   }, [activeView]);
 
@@ -315,6 +359,9 @@ export default function App() {
       void window.orderApi.listOrders().then(setOrders);
       void window.orderApi.listTrashedOrders().then(setTrashedOrders);
       void window.orderApi.listCustomers().then(setCustomers);
+      if (activeView === "quickPhrases") {
+        void window.orderApi.listQuickPhrases().then(setQuickPhrases);
+      }
       if (selectedOrderId) {
         void window.orderApi.getOrder(selectedOrderId).then(setSelectedOrder);
       }
@@ -419,6 +466,18 @@ export default function App() {
     );
   }, [customerQuery, customers]);
 
+  const filteredQuickPhrases = useMemo(() => {
+    const normalizedQuery = quickPhraseQuery.trim().toLowerCase();
+    if (!normalizedQuery) return quickPhrases;
+
+    return quickPhrases.filter((phrase) =>
+      [phrase.title, phrase.content]
+        .join(" ")
+        .toLowerCase()
+        .includes(normalizedQuery)
+    );
+  }, [quickPhraseQuery, quickPhrases]);
+
   const stats = useMemo(() => {
     const completedOrders = orders.filter((order) => order.status === "finished_uploaded");
     const now = new Date();
@@ -450,6 +509,13 @@ export default function App() {
       trashed: trashedOrders.length
     };
   }, [orders, trashedOrders.length]);
+  const todayDateFilter = toDateInputValue(new Date());
+  const isOrderFilterClear =
+    query.trim() === "" &&
+    categoryFilter === allCategoryLabel &&
+    statusFilter === "all" &&
+    !dateFrom &&
+    !dateTo;
 
   const archiveOverview = useMemo(() => {
     return {
@@ -503,21 +569,29 @@ export default function App() {
       ? "客户订单管理系统"
       : activeView === "customers"
         ? "客户资料库"
-        : activeView === "archive"
-          ? "文件归档"
-          : activeView === "trash"
-            ? "垃圾箱"
-            : "费用总览";
+        : activeView === "quickPhrases"
+          ? "常用快捷语"
+          : activeView === "archive"
+            ? "文件归档"
+            : activeView === "trash"
+              ? "垃圾箱"
+              : activeView === "fees"
+                ? "费用总览"
+                : "数据中心";
   const eyebrow =
     activeView === "orders"
       ? "订单工作台"
       : activeView === "customers"
         ? "老客户自动补全"
-        : activeView === "archive"
-          ? "全部订单附件"
-          : activeView === "trash"
-            ? "可恢复的订单"
-            : "设计费统计";
+        : activeView === "quickPhrases"
+          ? "一键复制常用话术"
+          : activeView === "archive"
+            ? "全部订单附件"
+            : activeView === "trash"
+              ? "可恢复的订单"
+              : activeView === "fees"
+                ? "设计费统计"
+                : "本机数据位置";
 
   async function refreshOrders() {
     const nextOrders = await window.orderApi.listOrders();
@@ -539,6 +613,16 @@ export default function App() {
     setCustomers(nextCustomers);
   }
 
+  async function refreshQuickPhrases() {
+    const nextQuickPhrases = await window.orderApi.listQuickPhrases();
+    setQuickPhrases(nextQuickPhrases);
+  }
+
+  async function refreshStorageInfo() {
+    const info = await window.orderApi.getStorageInfo();
+    setStorageInfo(info);
+  }
+
   async function refreshCurrentView() {
     await refreshOrders();
     await refreshSelectedOrder();
@@ -549,12 +633,44 @@ export default function App() {
     if (activeView === "trash") {
       await refreshTrashedOrders();
     }
+    if (activeView === "quickPhrases") {
+      await refreshQuickPhrases();
+    }
+    if (activeView === "data") {
+      await refreshStorageInfo();
+    }
   }
 
   async function refreshSelectedOrder(orderId = selectedOrderId) {
     if (!orderId) return;
     const detail = await window.orderApi.getOrder(orderId);
     setSelectedOrder(detail);
+  }
+
+  function applyOrderQuickFilter(filter: OrderQuickFilter) {
+    const today = toDateInputValue(new Date());
+    setActiveView("orders");
+    setQuery("");
+    setCategoryFilter(allCategoryLabel);
+
+    if (filter === "today") {
+      setStatusFilter("all");
+      setDateFrom(today);
+      setDateTo(today);
+      showToast("已筛选今日订单");
+      return;
+    }
+
+    setDateFrom("");
+    setDateTo("");
+    if (filter === "all") {
+      setStatusFilter("all");
+      showToast("已显示全部订单");
+      return;
+    }
+
+    setStatusFilter(filter);
+    showToast(`已筛选：${getOrderStatusOption(filter).label}`);
   }
 
   function openCreateDialog() {
@@ -832,6 +948,166 @@ export default function App() {
     }
   }
 
+  async function refreshOrderFiles(orderId = selectedOrderId) {
+    if (!orderId) return;
+
+    try {
+      const detail = await window.orderApi.getOrder(orderId);
+      await refreshOrders();
+      if (activeView === "archive") await refreshArchivedFiles();
+      setSelectedOrder(detail);
+      showToast("文件列表已刷新");
+    } catch (error) {
+      showToast(getErrorMessage(error));
+    }
+  }
+
+  async function openDataRoot() {
+    try {
+      await window.orderApi.openDataRoot();
+      showToast("已打开数据目录");
+    } catch (error) {
+      showToast(getErrorMessage(error));
+    }
+  }
+
+  async function openFilesRoot() {
+    try {
+      await window.orderApi.openFilesRoot();
+      showToast("已打开客户文件目录");
+    } catch (error) {
+      showToast(getErrorMessage(error));
+    }
+  }
+
+  async function revealDatabase() {
+    try {
+      await window.orderApi.revealDatabase();
+      showToast("已定位数据库文件");
+    } catch (error) {
+      showToast(getErrorMessage(error));
+    }
+  }
+
+  async function exportBackup() {
+    try {
+      setExportingBackup(true);
+      const result = await window.orderApi.exportBackup();
+      if (!result) {
+        showToast("已取消导出备份");
+        return;
+      }
+      setLastBackupResult(result);
+      showToast("备份已导出");
+    } catch (error) {
+      showToast(getErrorMessage(error));
+    } finally {
+      setExportingBackup(false);
+    }
+  }
+
+  async function openBackupFolder(backupPath: string) {
+    try {
+      await window.orderApi.openBackupFolder(backupPath);
+      showToast("已打开备份目录");
+    } catch (error) {
+      showToast(getErrorMessage(error));
+    }
+  }
+
+  async function checkAppUpdateOnStart() {
+    try {
+      const update = await window.orderApi.checkAppUpdate();
+      if (update?.hasUpdate) {
+        setAvailableUpdate(update);
+      }
+    } catch {
+      // Startup update checks should never block daily work.
+    }
+  }
+
+  async function checkAppUpdateManually() {
+    try {
+      setCheckingUpdate(true);
+      const update = await window.orderApi.checkAppUpdate();
+      if (update?.hasUpdate) {
+        setAvailableUpdate(update);
+        showToast("发现可用更新");
+        return;
+      }
+      showToast("当前已经是最新版");
+    } catch (error) {
+      showToast(getErrorMessage(error));
+    } finally {
+      setCheckingUpdate(false);
+    }
+  }
+
+  async function updateAppFromFolder(sourcePath?: string) {
+    try {
+      setUpdatingApp(true);
+      const result = await window.orderApi.updateAppFromFolder(sourcePath);
+      if (!result) {
+        showToast("已取消更新");
+        setUpdatingApp(false);
+        return;
+      }
+      showToast(`正在更新到 ${result.sourceVersion}，应用会自动重启`);
+    } catch (error) {
+      setUpdatingApp(false);
+      showToast(getErrorMessage(error));
+    }
+  }
+
+  function resetQuickPhraseForm() {
+    setEditingQuickPhraseId(null);
+    setQuickPhraseForm({ title: "", content: "" });
+  }
+
+  function editQuickPhrase(phrase: QuickPhrase) {
+    setEditingQuickPhraseId(phrase.id);
+    setQuickPhraseForm({ title: phrase.title, content: phrase.content });
+  }
+
+  async function submitQuickPhrase(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!quickPhraseForm.content.trim()) {
+      showToast("先填写快捷语内容");
+      return;
+    }
+
+    try {
+      setSavingQuickPhrase(true);
+      if (editingQuickPhraseId) {
+        await window.orderApi.updateQuickPhrase({ id: editingQuickPhraseId, ...quickPhraseForm });
+        showToast("快捷语已更新");
+      } else {
+        await window.orderApi.createQuickPhrase(quickPhraseForm);
+        showToast("快捷语已添加");
+      }
+      await refreshQuickPhrases();
+      resetQuickPhraseForm();
+    } catch (error) {
+      showToast(getErrorMessage(error));
+    } finally {
+      setSavingQuickPhrase(false);
+    }
+  }
+
+  async function deleteQuickPhrase(phrase: QuickPhrase) {
+    try {
+      await window.orderApi.deleteQuickPhrase(phrase.id);
+      await refreshQuickPhrases();
+      if (editingQuickPhraseId === phrase.id) {
+        resetQuickPhraseForm();
+      }
+      showToast("快捷语已删除");
+    } catch (error) {
+      showToast(getErrorMessage(error));
+    }
+  }
+
   function handleRowKeyDown(event: KeyboardEvent<HTMLDivElement>, orderId: string) {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
@@ -906,6 +1182,14 @@ export default function App() {
             <span>客户资料</span>
           </button>
           <button
+            className={`nav-item ${activeView === "quickPhrases" ? "active" : ""}`}
+            type="button"
+            onClick={() => setActiveView("quickPhrases")}
+          >
+            <Sparkles size={18} />
+            <span>常用快捷语</span>
+          </button>
+          <button
             className={`nav-item ${activeView === "archive" ? "active" : ""}`}
             type="button"
             onClick={() => setActiveView("archive")}
@@ -929,12 +1213,20 @@ export default function App() {
             <WalletCards size={18} />
             <span>费用总览</span>
           </button>
+          <button
+            className={`nav-item ${activeView === "data" ? "active" : ""}`}
+            type="button"
+            onClick={() => setActiveView("data")}
+          >
+            <Database size={18} />
+            <span>数据中心</span>
+          </button>
         </nav>
 
-        <div className="sidebar-footer">
+        <button className="sidebar-footer" type="button" onClick={() => setActiveView("data")}>
           <div className="storage-dot" />
           <span>本机 SQLite</span>
-        </div>
+        </button>
       </aside>
 
       <main className="workspace">
@@ -951,6 +1243,12 @@ export default function App() {
               <button className="primary-button" type="button" onClick={openCreateDialog}>
                 <Plus size={18} />
                 <span>新建订单</span>
+              </button>
+            ) : null}
+            {activeView === "quickPhrases" ? (
+              <button className="primary-button" type="button" onClick={resetQuickPhraseForm}>
+                <Plus size={18} />
+                <span>新增快捷语</span>
               </button>
             ) : null}
           </div>
@@ -970,6 +1268,42 @@ export default function App() {
               tone="danger"
               onClick={() => setActiveView("trash")}
             />
+          </section>
+        ) : null}
+
+        {activeView === "orders" ? (
+          <section className="quick-filter-strip" aria-label="订单快捷筛选">
+            <button className={isOrderFilterClear ? "active" : ""} type="button" onClick={() => applyOrderQuickFilter("all")}>
+              全部订单
+            </button>
+            <button
+              className={dateFrom === todayDateFilter && dateTo === todayDateFilter && statusFilter === "all" ? "active" : ""}
+              type="button"
+              onClick={() => applyOrderQuickFilter("today")}
+            >
+              今日订单
+            </button>
+            <button
+              className={statusFilter === "wechat_pending" && !dateFrom && !dateTo ? "active" : ""}
+              type="button"
+              onClick={() => applyOrderQuickFilter("wechat_pending")}
+            >
+              微信未加
+            </button>
+            <button
+              className={statusFilter === "designing" && !dateFrom && !dateTo ? "active" : ""}
+              type="button"
+              onClick={() => applyOrderQuickFilter("designing")}
+            >
+              设计中
+            </button>
+            <button
+              className={statusFilter === "finished_uploaded" && !dateFrom && !dateTo ? "active" : ""}
+              type="button"
+              onClick={() => applyOrderQuickFilter("finished_uploaded")}
+            >
+              已完稿上传
+            </button>
           </section>
         ) : null}
 
@@ -997,12 +1331,14 @@ export default function App() {
             categoryFilters={categoryFilters}
             dateFrom={dateFrom}
             dateTo={dateTo}
+            displayMode={orderDisplayMode}
             filteredOrders={filteredOrders}
             onCategoryFilterChange={setCategoryFilter}
             onContextMenu={setContextMenu}
             onCopy={copyValue}
             onDateFromChange={setDateFrom}
             onDateToChange={setDateTo}
+            onDisplayModeChange={setOrderDisplayMode}
             onKeyDown={handleRowKeyDown}
             onOpenFolder={(orderId) => void openOrderFolder(orderId)}
             onQueryChange={setQuery}
@@ -1012,6 +1348,7 @@ export default function App() {
             }}
             onSelect={setSelectedOrderId}
             onStatusFilterChange={setStatusFilter}
+            onUpdateStatus={(order, status) => void updateStatus(order, status)}
             query={query}
             selectedOrderId={selectedOrderId}
             statusFilter={statusFilter}
@@ -1048,6 +1385,24 @@ export default function App() {
           />
         ) : null}
 
+        {activeView === "quickPhrases" ? (
+          <QuickPhrasesView
+            draft={quickPhraseForm}
+            editingId={editingQuickPhraseId}
+            isSaving={isSavingQuickPhrase}
+            onCopy={copyValue}
+            onDelete={(phrase) => void deleteQuickPhrase(phrase)}
+            onDraftChange={setQuickPhraseForm}
+            onEdit={editQuickPhrase}
+            onQueryChange={setQuickPhraseQuery}
+            onReset={resetQuickPhraseForm}
+            onSubmit={(event) => void submitQuickPhrase(event)}
+            phrases={filteredQuickPhrases}
+            query={quickPhraseQuery}
+            totalCount={quickPhrases.length}
+          />
+        ) : null}
+
         {activeView === "trash" ? (
           <TrashView
             orders={filteredTrashedOrders}
@@ -1059,6 +1414,23 @@ export default function App() {
         ) : null}
 
         {activeView === "fees" ? <FeesView summary={feeSummary} /> : null}
+        {activeView === "data" ? (
+          <DataCenterView
+            isCheckingUpdate={isCheckingUpdate}
+            isExportingBackup={isExportingBackup}
+            isUpdatingApp={isUpdatingApp}
+            lastBackupResult={lastBackupResult}
+            onCheckUpdate={() => void checkAppUpdateManually()}
+            onCopy={copyValue}
+            onExportBackup={() => void exportBackup()}
+            onOpenBackupFolder={(backupPath) => void openBackupFolder(backupPath)}
+            onOpenDataRoot={() => void openDataRoot()}
+            onOpenFilesRoot={() => void openFilesRoot()}
+            onRevealDatabase={() => void revealDatabase()}
+            onUpdateApp={() => void updateAppFromFolder()}
+            storageInfo={storageInfo}
+          />
+        ) : null}
       </main>
 
       {activeView === "orders" ? (
@@ -1141,6 +1513,10 @@ export default function App() {
                 <button className="secondary-button" type="button" onClick={() => void openOrderFolder(selectedOrder.id)}>
                   <FolderOpen size={16} />
                   <span>进入客户文件夹</span>
+                </button>
+                <button className="secondary-button" type="button" onClick={() => void refreshOrderFiles(selectedOrder.id)}>
+                  <RefreshCw size={16} />
+                  <span>刷新文件</span>
                 </button>
               </div>
             </div>
@@ -1292,6 +1668,15 @@ export default function App() {
         </div>
       ) : null}
 
+      {availableUpdate ? (
+        <UpdatePrompt
+          isUpdating={isUpdatingApp}
+          update={availableUpdate}
+          onApply={() => void updateAppFromFolder(availableUpdate.sourcePath)}
+          onDismiss={() => setAvailableUpdate(null)}
+        />
+      ) : null}
+
         {toast ? <div className="toast">{toast}</div> : null}
       </div>
 
@@ -1318,6 +1703,53 @@ function WelcomeIntro({ isClosing }: { isClosing: boolean }) {
 
         <div className="welcome-shadow" aria-hidden="true" />
         <div className="welcome-caption">欢迎使用</div>
+      </div>
+    </div>
+  );
+}
+
+function UpdatePrompt({
+  isUpdating,
+  onApply,
+  onDismiss,
+  update
+}: {
+  isUpdating: boolean;
+  onApply: () => void;
+  onDismiss: () => void;
+  update: AppUpdateInfo;
+}) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <div className="confirm-modal update-modal" role="dialog" aria-modal="true" aria-label="发现新版本">
+        <div className="confirm-icon">
+          <RefreshCw size={24} />
+        </div>
+        <h2>发现新版本</h2>
+        <p>
+          当前版本 <strong>{update.currentVersion}</strong>，可更新到 <strong>{update.sourceVersion}</strong>。
+        </p>
+        <div className="update-meta">
+          <span>当前构建：{update.currentBuildTime ? formatDateTime(update.currentBuildTime) : "未知"}</span>
+          <span>新版构建：{update.sourceBuildTime ? formatDateTime(update.sourceBuildTime) : "未知"}</span>
+        </div>
+        <div className="update-notes">
+          <strong>更新内容</strong>
+          <ul>
+            {update.releaseNotes.map((note) => (
+              <li key={note}>{note}</li>
+            ))}
+          </ul>
+        </div>
+        <div className="modal-actions">
+          <button className="secondary-button" type="button" onClick={onDismiss} disabled={isUpdating}>
+            暂不更新
+          </button>
+          <button className="primary-button" type="button" onClick={onApply} disabled={isUpdating}>
+            <RefreshCw size={18} />
+            <span>{isUpdating ? "正在准备..." : "立即更新"}</span>
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -1575,18 +2007,21 @@ function OrdersView({
   categoryFilters,
   dateFrom,
   dateTo,
+  displayMode,
   filteredOrders,
   onCategoryFilterChange,
   onContextMenu,
   onCopy,
   onDateFromChange,
   onDateToChange,
+  onDisplayModeChange,
   onKeyDown,
   onOpenFolder,
   onQueryChange,
   onResetDateFilter,
   onSelect,
   onStatusFilterChange,
+  onUpdateStatus,
   query,
   selectedOrderId,
   statusFilter
@@ -1595,18 +2030,21 @@ function OrdersView({
   categoryFilters: string[];
   dateFrom: string;
   dateTo: string;
+  displayMode: OrderDisplayMode;
   filteredOrders: OrderSummary[];
   onCategoryFilterChange: (value: string) => void;
   onContextMenu: (menu: ContextMenuState) => void;
   onCopy: (label: string, value: string) => void;
   onDateFromChange: (value: string) => void;
   onDateToChange: (value: string) => void;
+  onDisplayModeChange: (value: OrderDisplayMode) => void;
   onKeyDown: (event: KeyboardEvent<HTMLDivElement>, orderId: string) => void;
   onOpenFolder: (orderId: string) => void;
   onQueryChange: (value: string) => void;
   onResetDateFilter: () => void;
   onSelect: (id: string) => void;
   onStatusFilterChange: (value: StatusFilterValue) => void;
+  onUpdateStatus: (order: OrderSummary, status: OrderStatus) => void;
   query: string;
   selectedOrderId: string | null;
   statusFilter: StatusFilterValue;
@@ -1662,6 +2100,24 @@ function OrdersView({
         </button>
       </section>
 
+      <section className="view-switch" aria-label="订单显示方式">
+        <button
+          className={displayMode === "table" ? "active" : ""}
+          type="button"
+          onClick={() => onDisplayModeChange("table")}
+        >
+          表格
+        </button>
+        <button
+          className={displayMode === "board" ? "active" : ""}
+          type="button"
+          onClick={() => onDisplayModeChange("board")}
+        >
+          看板
+        </button>
+      </section>
+
+      {displayMode === "table" ? (
       <section className="order-table-wrap" aria-label="订单列表">
         <div className="table-header table-grid">
           <span>源单号</span>
@@ -1725,7 +2181,117 @@ function OrdersView({
           )}
         </div>
       </section>
+      ) : (
+        <OrderBoard
+          orders={filteredOrders}
+          onCopy={onCopy}
+          onKeyDown={onKeyDown}
+          onOpenFolder={onOpenFolder}
+          onSelect={onSelect}
+          onUpdateStatus={onUpdateStatus}
+          selectedOrderId={selectedOrderId}
+        />
+      )}
     </>
+  );
+}
+
+function OrderBoard({
+  onCopy,
+  onKeyDown,
+  onOpenFolder,
+  onSelect,
+  onUpdateStatus,
+  orders,
+  selectedOrderId
+}: {
+  onCopy: (label: string, value: string) => void;
+  onKeyDown: (event: KeyboardEvent<HTMLDivElement>, orderId: string) => void;
+  onOpenFolder: (orderId: string) => void;
+  onSelect: (id: string) => void;
+  onUpdateStatus: (order: OrderSummary, status: OrderStatus) => void;
+  orders: OrderSummary[];
+  selectedOrderId: string | null;
+}) {
+  const ordersByStatus = boardStatusColumns.map((column) => ({
+    ...column,
+    orders: orders.filter((order) => order.status === column.value)
+  }));
+
+  function handleDrop(event: DragEvent<HTMLDivElement>, status: OrderStatus) {
+    event.preventDefault();
+    const orderId = event.dataTransfer.getData("text/plain");
+    const order = orders.find((item) => item.id === orderId);
+    if (!order || order.status === status) return;
+    onUpdateStatus(order, status);
+  }
+
+  return (
+    <section className="order-board" aria-label="订单状态看板">
+      {ordersByStatus.map((column) => (
+        <div
+          className={`board-column ${column.tone}`}
+          key={column.value}
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => handleDrop(event, column.value)}
+        >
+          <div className="board-column-head">
+            <span className={`status-dot ${column.tone}`} />
+            <strong>{column.label}</strong>
+            <small>{column.orders.length} 单</small>
+          </div>
+          <div className="board-column-body">
+            {column.orders.length === 0 ? (
+              <div className="board-empty">暂无订单</div>
+            ) : (
+              column.orders.map((order) => (
+                <div
+                  className={`board-card ${selectedOrderId === order.id ? "selected" : ""}`}
+                  draggable
+                  key={order.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onSelect(order.id)}
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = "move";
+                    event.dataTransfer.setData("text/plain", order.id);
+                  }}
+                  onKeyDown={(event) => onKeyDown(event, order.id)}
+                >
+                  <div className="board-card-head">
+                    <CopyField label="源单号" value={order.workOrderNo} onCopy={onCopy} strong />
+                    <button
+                      className="icon-button compact"
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onOpenFolder(order.id);
+                      }}
+                      aria-label="进入客户文件夹"
+                    >
+                      <FolderOpen size={14} />
+                    </button>
+                  </div>
+                  <div className="board-card-customer">
+                    <strong>{order.customerNickname}</strong>
+                    <span>{order.customerWechat || order.customerPhone || "微信未填"}</span>
+                  </div>
+                  <div className="board-card-meta">
+                    <Badge>{order.category}</Badge>
+                    <span>{order.designSize || "未填尺寸"}</span>
+                  </div>
+                  <div className="board-card-foot">
+                    <span>{formatCurrency(order.designFee)}</span>
+                    <span>{formatDate(order.orderTime)}</span>
+                    <span>{order.fileCount} 文件</span>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      ))}
+    </section>
   );
 }
 
@@ -1787,6 +2353,133 @@ function StatusFilter({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function QuickPhrasesView({
+  draft,
+  editingId,
+  isSaving,
+  onCopy,
+  onDelete,
+  onDraftChange,
+  onEdit,
+  onQueryChange,
+  onReset,
+  onSubmit,
+  phrases,
+  query,
+  totalCount
+}: {
+  draft: QuickPhraseFormState;
+  editingId: string | null;
+  isSaving: boolean;
+  onCopy: (label: string, value: string) => void;
+  onDelete: (phrase: QuickPhrase) => void;
+  onDraftChange: (draft: QuickPhraseFormState) => void;
+  onEdit: (phrase: QuickPhrase) => void;
+  onQueryChange: (value: string) => void;
+  onReset: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  phrases: QuickPhrase[];
+  query: string;
+  totalCount: number;
+}) {
+  const trimmedQuery = query.trim();
+
+  return (
+    <>
+      <section className="toolbar" aria-label="快捷语筛选">
+        <label className="search-field">
+          <Search size={18} />
+          <input
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+            placeholder="搜索快捷语标题 / 内容"
+          />
+        </label>
+      </section>
+
+      <section className="quick-phrases-panel" aria-label="常用快捷语">
+        <form className="quick-phrase-editor" onSubmit={onSubmit}>
+          <div className="section-title">
+            <h3>{editingId ? "编辑快捷语" : "添加快捷语"}</h3>
+            <span>{editingId ? "修改后保存" : "内容会保存在本机"}</span>
+          </div>
+
+          <FormField label="标题">
+            <input
+              value={draft.title}
+              onChange={(event) => onDraftChange({ ...draft, title: event.target.value })}
+              placeholder="例如：加微信提醒"
+            />
+          </FormField>
+
+          <FormField label="快捷语内容" wide>
+            <textarea
+              value={draft.content}
+              onChange={(event) => onDraftChange({ ...draft, content: event.target.value })}
+              placeholder="输入常用话术，之后可以一键复制"
+              rows={9}
+            />
+          </FormField>
+
+          <div className="quick-phrase-editor-actions">
+            {editingId ? (
+              <button className="secondary-button" type="button" onClick={onReset}>
+                取消编辑
+              </button>
+            ) : null}
+            <button className="primary-button" type="submit" disabled={isSaving || !draft.content.trim()}>
+              <Plus size={17} />
+              <span>{isSaving ? "保存中..." : editingId ? "保存修改" : "添加快捷语"}</span>
+            </button>
+          </div>
+        </form>
+
+        <div className="quick-phrase-list-panel">
+          <div className="section-title">
+            <h3>快捷语列表</h3>
+            <span>
+              {trimmedQuery ? `${phrases.length} / ${totalCount} 条` : `${totalCount} 条`}
+            </span>
+          </div>
+
+          {phrases.length === 0 ? (
+            <div className="empty-state">
+              <Sparkles size={34} />
+              <span>{trimmedQuery ? "没有匹配的快捷语" : "还没有快捷语，先添加一条"}</span>
+            </div>
+          ) : (
+            <div className="quick-phrase-list">
+              {phrases.map((phrase) => (
+                <article className={`quick-phrase-card ${editingId === phrase.id ? "editing" : ""}`} key={phrase.id}>
+                  <div className="quick-phrase-card-head">
+                    <strong>{phrase.title}</strong>
+                    <span>{formatDateTime(phrase.updatedAt)}</span>
+                  </div>
+                  <p>{phrase.content}</p>
+                  <div className="quick-phrase-actions">
+                    <button className="secondary-button compact-action" type="button" onClick={() => onCopy("快捷语", phrase.content)}>
+                      <Copy size={15} />
+                      <span>复制</span>
+                    </button>
+                    <button className="secondary-button compact-action" type="button" onClick={() => onEdit(phrase)}>
+                      <Edit3 size={15} />
+                      <span>编辑</span>
+                    </button>
+                    <button className="danger-button compact-action" type="button" onClick={() => onDelete(phrase)}>
+                      <Trash2 size={15} />
+                      <span>删除</span>
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+    </>
   );
 }
 
@@ -2112,6 +2805,187 @@ function FeesView({
         ))}
       </div>
     </section>
+  );
+}
+
+function DataCenterView({
+  isCheckingUpdate,
+  isExportingBackup,
+  isUpdatingApp,
+  lastBackupResult,
+  onCheckUpdate,
+  onCopy,
+  onExportBackup,
+  onOpenBackupFolder,
+  onOpenDataRoot,
+  onOpenFilesRoot,
+  onRevealDatabase,
+  onUpdateApp,
+  storageInfo
+}: {
+  isCheckingUpdate: boolean;
+  isExportingBackup: boolean;
+  isUpdatingApp: boolean;
+  lastBackupResult: StorageBackupResult | null;
+  onCheckUpdate: () => void;
+  onCopy: (label: string, value: string) => void;
+  onExportBackup: () => void;
+  onOpenBackupFolder: (backupPath: string) => void;
+  onOpenDataRoot: () => void;
+  onOpenFilesRoot: () => void;
+  onRevealDatabase: () => void;
+  onUpdateApp: () => void;
+  storageInfo: StorageInfo | null;
+}) {
+  if (!storageInfo) {
+    return (
+      <section className="data-center-view" aria-label="数据中心">
+        <div className="empty-state">
+          <Database size={34} />
+          <span>正在读取本机数据位置</span>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="data-center-view" aria-label="数据中心">
+      <div className="data-hero">
+        <div className="data-hero-icon">
+          <ShieldCheck size={24} />
+        </div>
+        <div>
+          <p className="eyebrow">DATA CENTER</p>
+          <h2>数据中心</h2>
+          <span>当前版本 {storageInfo.appVersion || "本地调试"}</span>
+        </div>
+      </div>
+
+      <div className="data-storage-grid" aria-label="数据容量概览">
+        <DataStatCard label="数据库大小" value={formatBytes(storageInfo.databaseSize)} />
+        <DataStatCard label="客户文件大小" value={formatBytes(storageInfo.filesSize)} />
+        <DataStatCard label="客户文件数量" value={`${storageInfo.fileCount} 个`} />
+      </div>
+
+      <div className="data-path-grid">
+        <DataPathCard
+          icon={<HardDrive size={20} />}
+          label="数据根目录"
+          value={storageInfo.dataRoot}
+          actionLabel="打开"
+          onAction={onOpenDataRoot}
+          onCopy={onCopy}
+        />
+        <DataPathCard
+          icon={<Database size={20} />}
+          label="SQLite 数据库"
+          value={storageInfo.databasePath}
+          actionLabel="定位"
+          onAction={onRevealDatabase}
+          onCopy={onCopy}
+        />
+        <DataPathCard
+          icon={<FolderOpen size={20} />}
+          label="客户文件目录"
+          value={storageInfo.filesRoot}
+          actionLabel="打开"
+          onAction={onOpenFilesRoot}
+          onCopy={onCopy}
+        />
+      </div>
+
+      <div className="data-backup-card">
+        <div className="data-backup-copy">
+          <div className="data-path-icon">
+            <FileArchive size={20} />
+          </div>
+          <div>
+            <h3>导出备份</h3>
+            <p>选择一个安全位置，导出 SQLite 数据库和客户文件目录。不会覆盖当前数据。</p>
+          </div>
+        </div>
+        <button className="primary-button" type="button" onClick={onExportBackup} disabled={isExportingBackup}>
+          <FileArchive size={17} />
+          <span>{isExportingBackup ? "导出中..." : "导出备份"}</span>
+        </button>
+        {lastBackupResult ? (
+          <div className="data-backup-result">
+            <span>最近备份：{formatDateTime(lastBackupResult.createdAt)}</span>
+            <CopyField label="备份目录" value={lastBackupResult.backupPath} onCopy={onCopy} />
+            <button className="secondary-button" type="button" onClick={() => onOpenBackupFolder(lastBackupResult.backupPath)}>
+              <FolderOpen size={16} />
+              <span>打开最近备份</span>
+            </button>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="data-backup-card data-update-card">
+        <div className="data-backup-copy">
+          <div className="data-path-icon">
+            <RefreshCw size={20} />
+          </div>
+          <div>
+            <h3>应用更新</h3>
+            <p>有新版打包出来后，选择新版 win-unpacked 文件夹。应用会自动关闭、覆盖当前程序目录并重启。</p>
+          </div>
+        </div>
+        <button className="secondary-button" type="button" onClick={onUpdateApp} disabled={isUpdatingApp}>
+          <RefreshCw size={17} />
+          <span>{isUpdatingApp ? "准备更新..." : "选择新版目录更新"}</span>
+        </button>
+        <div className="data-update-actions">
+          <button className="secondary-button" type="button" onClick={onCheckUpdate} disabled={isCheckingUpdate || isUpdatingApp}>
+            <RefreshCw size={16} />
+            <span>{isCheckingUpdate ? "检查中..." : "检查更新"}</span>
+          </button>
+        </div>
+      </div>
+
+      <div className="data-safety-note">
+        <ShieldCheck size={18} />
+        <span>当前只支持导出备份，暂不提供恢复覆盖操作，避免误伤现有订单和客户文件。</span>
+      </div>
+    </section>
+  );
+}
+
+function DataStatCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="data-stat-card">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function DataPathCard({
+  actionLabel,
+  icon,
+  label,
+  onAction,
+  onCopy,
+  value
+}: {
+  actionLabel: string;
+  icon: ReactNode;
+  label: string;
+  onAction: () => void;
+  onCopy: (label: string, value: string) => void;
+  value: string;
+}) {
+  return (
+    <div className="data-path-card">
+      <div className="data-path-head">
+        <div className="data-path-icon">{icon}</div>
+        <span>{label}</span>
+      </div>
+      <CopyField label={label} value={value} onCopy={onCopy} />
+      <button className="secondary-button" type="button" onClick={onAction}>
+        <FolderOpen size={16} />
+        <span>{actionLabel}</span>
+      </button>
+    </div>
   );
 }
 
@@ -2563,6 +3437,11 @@ function formatBytes(value: number): string {
 function toDateTimeInputValue(date: Date): string {
   const offsetDate = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
   return offsetDate.toISOString().slice(0, 16);
+}
+
+function toDateInputValue(date: Date): string {
+  const offsetDate = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return offsetDate.toISOString().slice(0, 10);
 }
 
 function getErrorMessage(error: unknown): string {

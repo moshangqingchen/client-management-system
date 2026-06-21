@@ -19,6 +19,37 @@ export interface OrderUpdateInput extends OrderInput {
   id: string;
 }
 
+export interface QuickPhraseInput {
+  title?: string;
+  content: string;
+}
+
+export interface QuickPhraseUpdateInput extends QuickPhraseInput {
+  id: string;
+}
+
+export interface QuickPhrase {
+  id: string;
+  title: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AppUpdateResult {
+  sourcePath: string;
+  targetPath: string;
+  currentVersion: string;
+  sourceVersion: string;
+}
+
+export interface AppUpdateInfo extends AppUpdateResult {
+  hasUpdate: boolean;
+  currentBuildTime: string | null;
+  sourceBuildTime: string | null;
+  releaseNotes: string[];
+}
+
 export interface OrderRecord {
   id: string;
   customerId: string | null;
@@ -94,6 +125,16 @@ export interface CustomerDetail extends CustomerProfile {
 }
 
 export interface StorageInfo {
+  appVersion: string;
+  dataRoot: string;
   databasePath: string;
+  databaseSize: number;
   filesRoot: string;
+  filesSize: number;
+  fileCount: number;
+}
+
+export interface StorageBackupResult {
+  backupPath: string;
+  createdAt: string;
 }

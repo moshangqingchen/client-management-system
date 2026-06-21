@@ -14,6 +14,10 @@ import type {
   OrderFile,
   OrderInput,
   OrderRecord,
+  QuickPhrase,
+  QuickPhraseInput,
+  QuickPhraseUpdateInput,
+  StorageBackupResult,
   OrderSummary,
   OrderUpdateInput,
   StorageInfo
@@ -79,13 +83,25 @@ interface CustomerRow {
   last_order_time?: string | null;
 }
 
+interface QuickPhraseRow {
+  id: string;
+  title: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export class OrderDatabase {
   private readonly db: DatabaseSync;
+  private readonly appVersion: string;
+  private readonly dataRoot: string;
   private readonly databasePath: string;
   private readonly filesRoot: string;
 
-  constructor(userDataPath: string) {
+  constructor(userDataPath: string, appVersion = "") {
     const dataRoot = path.join(userDataPath, "design-order-manager");
+    this.appVersion = appVersion;
+    this.dataRoot = dataRoot;
     this.filesRoot = path.join(dataRoot, "order-files");
     this.databasePath = path.join(dataRoot, "orders.sqlite");
 
@@ -99,10 +115,57 @@ export class OrderDatabase {
   }
 
   getStorageInfo(): StorageInfo {
+    const fileStats = getFolderStats(this.filesRoot);
+    const databaseStats = fs.statSync(this.databasePath, { throwIfNoEntry: false });
+
     return {
+      appVersion: this.appVersion,
+      dataRoot: this.dataRoot,
       databasePath: this.databasePath,
-      filesRoot: this.filesRoot
+      databaseSize: databaseStats?.isFile() ? databaseStats.size : 0,
+      filesRoot: this.filesRoot,
+      filesSize: fileStats.size,
+      fileCount: fileStats.count
     };
+  }
+
+  async exportBackup(parentFolder: string): Promise<StorageBackupResult> {
+    const resolvedParent = path.resolve(parentFolder);
+    if (isPathSameOrInside(path.resolve(this.dataRoot), resolvedParent)) {
+      throw new Error("备份位置不能选择当前数据目录里面");
+    }
+
+    const createdAt = new Date().toISOString();
+    const backupPath = await uniqueBackupFolder(resolvedParent, `design-order-manager-backup-${formatBackupStamp(new Date())}`);
+    await fs.promises.mkdir(backupPath, { recursive: true });
+
+    const databaseBackupPath = path.join(backupPath, "orders.sqlite");
+    this.db.exec(`VACUUM INTO '${escapeSqlString(databaseBackupPath)}'`);
+
+    if (fs.existsSync(this.filesRoot)) {
+      await fs.promises.cp(this.filesRoot, path.join(backupPath, "order-files"), {
+        recursive: true,
+        errorOnExist: false,
+        force: false
+      });
+    }
+
+    await fs.promises.writeFile(
+      path.join(backupPath, "backup-info.json"),
+      JSON.stringify(
+        {
+          appVersion: this.appVersion,
+          createdAt,
+          database: "orders.sqlite",
+          files: "order-files"
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    return { backupPath, createdAt };
   }
 
   listOrders(): OrderSummary[] {
@@ -248,6 +311,64 @@ export class OrderDatabase {
     const customer = this.findCustomerByIdentity(normalizeCustomerIdentity(input));
     if (!customer) return null;
     return this.listCustomers().find((item) => item.id === customer.id) ?? null;
+  }
+
+  listQuickPhrases(): QuickPhrase[] {
+    const rows = this.db
+      .prepare("SELECT * FROM quick_phrases ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC")
+      .all() as unknown as QuickPhraseRow[];
+
+    return rows.map(mapQuickPhrase);
+  }
+
+  createQuickPhrase(input: QuickPhraseInput): QuickPhrase {
+    const normalized = normalizeQuickPhraseInput(input);
+    const id = randomUUID();
+    const now = new Date().toISOString();
+
+    this.db
+      .prepare(
+        `INSERT INTO quick_phrases (
+          id,
+          title,
+          content,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?)`
+      )
+      .run(id, normalized.title, normalized.content, now, now);
+
+    const created = this.getQuickPhrase(id);
+    if (!created) throw new Error("快捷语创建失败");
+    return created;
+  }
+
+  updateQuickPhrase(input: QuickPhraseUpdateInput): QuickPhrase {
+    const current = this.getQuickPhrase(input.id);
+    if (!current) throw new Error("快捷语不存在");
+
+    const normalized = normalizeQuickPhraseInput(input);
+    this.db
+      .prepare(
+        `UPDATE quick_phrases SET
+          title = ?,
+          content = ?,
+          updated_at = ?
+        WHERE id = ?`
+      )
+      .run(normalized.title, normalized.content, new Date().toISOString(), input.id);
+
+    const updated = this.getQuickPhrase(input.id);
+    if (!updated) throw new Error("快捷语更新失败");
+    return updated;
+  }
+
+  deleteQuickPhrase(phraseId: string): boolean {
+    const current = this.getQuickPhrase(phraseId);
+    if (!current) return false;
+
+    this.db.prepare("DELETE FROM quick_phrases WHERE id = ?").run(phraseId);
+    return true;
   }
 
   createOrder(input: OrderInput): OrderDetail {
@@ -515,6 +636,14 @@ export class OrderDatabase {
     return row ? mapFile(row) : null;
   }
 
+  private getQuickPhrase(phraseId: string): QuickPhrase | null {
+    const row = this.db.prepare("SELECT * FROM quick_phrases WHERE id = ?").get(phraseId) as unknown as
+      | QuickPhraseRow
+      | undefined;
+
+    return row ? mapQuickPhrase(row) : null;
+  }
+
   async getOrCreateOrderFolder(orderId: string): Promise<string> {
     const row = this.db.prepare("SELECT id, work_order_no FROM orders WHERE id = ?").get(orderId) as unknown as
       | OrderFolderRow
@@ -772,11 +901,20 @@ export class OrderDatabase {
         FOREIGN KEY(order_id) REFERENCES orders(id) ON DELETE CASCADE
       );
 
+      CREATE TABLE IF NOT EXISTS quick_phrases (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL DEFAULT '',
+        content TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
       CREATE INDEX IF NOT EXISTS idx_orders_order_time ON orders(order_time);
       CREATE INDEX IF NOT EXISTS idx_customers_wechat ON customers(customer_wechat);
       CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(customer_phone);
       CREATE INDEX IF NOT EXISTS idx_customers_nickname ON customers(customer_nickname);
       CREATE INDEX IF NOT EXISTS idx_files_order_id ON order_files(order_id);
+      CREATE INDEX IF NOT EXISTS idx_quick_phrases_updated_at ON quick_phrases(updated_at);
     `);
     this.migrate();
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_orders_customer_id ON orders(customer_id);");
@@ -845,6 +983,30 @@ function mapCustomer(row: CustomerRow): CustomerProfile {
   };
 }
 
+function mapQuickPhrase(row: QuickPhraseRow): QuickPhrase {
+  return {
+    id: row.id,
+    title: row.title,
+    content: row.content,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function normalizeQuickPhraseInput(input: QuickPhraseInput): Required<QuickPhraseInput> {
+  const content = input.content.trim();
+  if (!content) throw new Error("快捷语内容不能为空");
+  if (content.length > 5000) throw new Error("快捷语内容不能超过 5000 字");
+
+  const fallbackTitle = content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean);
+  const title = (input.title?.trim() || fallbackTitle || "未命名快捷语").slice(0, 60);
+
+  return { title, content };
+}
+
 function normalizeCustomerIdentity(input: CustomerLookupInput & { shippingAddress?: string }): Required<CustomerLookupInput> & {
   shippingAddress: string;
 } {
@@ -905,6 +1067,22 @@ function listFilesRecursively(folder: string): string[] {
   return files;
 }
 
+function getFolderStats(folder: string): { count: number; size: number } {
+  const folderStats = fs.statSync(folder, { throwIfNoEntry: false });
+  if (!folderStats?.isDirectory()) return { count: 0, size: 0 };
+
+  return listFilesRecursively(folder).reduce(
+    (acc, filePath) => {
+      const stats = fs.statSync(filePath, { throwIfNoEntry: false });
+      if (!stats?.isFile()) return acc;
+      acc.count += 1;
+      acc.size += stats.size;
+      return acc;
+    },
+    { count: 0, size: 0 }
+  );
+}
+
 function shouldSkipSyncedFile(fileName: string): boolean {
   return path.basename(fileName).toLowerCase().startsWith("wechat-qr");
 }
@@ -927,6 +1105,18 @@ async function uniqueDestination(folder: string, originalName: string): Promise<
   while (await pathExists(candidate)) {
     const suffix = `-${index.toString().padStart(2, "0")}`;
     candidate = path.join(folder, `${parsed.name}${suffix}${parsed.ext}`);
+    index += 1;
+  }
+
+  return candidate;
+}
+
+async function uniqueBackupFolder(parentFolder: string, baseName: string): Promise<string> {
+  let candidate = path.join(parentFolder, sanitizeFileName(baseName));
+  let index = 1;
+
+  while (await pathExists(candidate)) {
+    candidate = path.join(parentFolder, `${sanitizeFileName(baseName)}-${index.toString().padStart(2, "0")}`);
     index += 1;
   }
 
@@ -962,4 +1152,25 @@ async function removeStoredFile(root: string, filePath: string): Promise<void> {
 function isPathInside(root: string, target: string): boolean {
   const relative = path.relative(root, target);
   return Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function isPathSameOrInside(root: string, target: string): boolean {
+  const relative = path.relative(root, target);
+  return relative === "" || (Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function formatBackupStamp(date: Date): string {
+  const pad = (value: number) => value.toString().padStart(2, "0");
+  return [
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate()),
+    pad(date.getHours()),
+    pad(date.getMinutes()),
+    pad(date.getSeconds())
+  ].join("");
+}
+
+function escapeSqlString(value: string): string {
+  return value.replace(/'/g, "''");
 }
