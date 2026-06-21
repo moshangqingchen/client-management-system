@@ -4,6 +4,10 @@ const os = require("node:os");
 const path = require("node:path");
 
 function findRcedit(projectDir) {
+  if (process.env.RCEDIT_PATH && fs.existsSync(process.env.RCEDIT_PATH)) {
+    return process.env.RCEDIT_PATH;
+  }
+
   const cacheRoot = path.join(os.homedir(), "AppData", "Local", "electron-builder", "Cache", "winCodeSign");
   const candidates = [];
 
@@ -38,23 +42,33 @@ exports.default = async function afterPack(context) {
   const exePath = path.join(context.appOutDir, `${appName}.exe`);
   const iconPath = path.join(context.packager.projectDir, "assets", "app-icon-design-blue-gpt-image-2.ico");
   const rceditPath = findRcedit(context.packager.projectDir);
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "design-order-manager-rcedit-"));
+  const tempExePath = path.join(tempDir, "app.exe");
+  const tempIconPath = path.join(tempDir, "app.ico");
 
-  execFileSync(rceditPath, [
-    exePath,
-    "--set-icon",
-    iconPath,
-    "--set-version-string",
-    "FileDescription",
-    appName,
-    "--set-version-string",
-    "ProductName",
-    appName,
-    "--set-version-string",
-    "OriginalFilename",
-    `${appName}.exe`,
-    "--set-file-version",
-    version,
-    "--set-product-version",
-    version
-  ]);
+  try {
+    fs.copyFileSync(exePath, tempExePath);
+    fs.copyFileSync(iconPath, tempIconPath);
+    execFileSync(rceditPath, [
+      tempExePath,
+      "--set-icon",
+      tempIconPath,
+      "--set-version-string",
+      "FileDescription",
+      appName,
+      "--set-version-string",
+      "ProductName",
+      appName,
+      "--set-version-string",
+      "OriginalFilename",
+      `${appName}.exe`,
+      "--set-file-version",
+      version,
+      "--set-product-version",
+      version
+    ]);
+    fs.copyFileSync(tempExePath, exePath);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
 };
