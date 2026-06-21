@@ -4,6 +4,7 @@ export interface UpdateScriptOptions {
   targetExePath: string;
   expectedVersion: string;
   logPath: string;
+  readyPath: string;
   pidToWait: number;
 }
 
@@ -16,13 +17,16 @@ export function createUpdateScript(options: UpdateScriptOptions): string {
     `$exe = ${toPowerShellString(options.targetExePath)}`,
     `$expectedVersion = ${toPowerShellString(options.expectedVersion)}`,
     `$log = ${toPowerShellString(options.logPath)}`,
+    `$ready = ${toPowerShellString(options.readyPath)}`,
     `$pidToWait = ${options.pidToWait}`,
     "function Write-UpdateLog([string]$message) {",
     "  Add-Content -LiteralPath $log -Value \"$(Get-Date -Format o) $message\" -Encoding UTF8",
     "}",
     "try {",
+    "  Set-Content -LiteralPath $ready -Value $PID -Encoding ASCII",
     "  Write-UpdateLog \"update started source=$source target=$target expected=$expectedVersion\"",
     "  Wait-Process -Id $pidToWait -ErrorAction SilentlyContinue",
+    "  Remove-Item -LiteralPath $ready -Force -ErrorAction SilentlyContinue",
     "  $targetPrefix = [System.IO.Path]::GetFullPath($target).TrimEnd('\\') + '\\'",
     "  $deadline = (Get-Date).AddSeconds(30)",
     "  do {",
@@ -52,6 +56,7 @@ export function createUpdateScript(options: UpdateScriptOptions): string {
     "  Start-Process -FilePath $exe",
     "  exit 0",
     "} catch {",
+    "  Remove-Item -LiteralPath $ready -Force -ErrorAction SilentlyContinue",
     "  Write-UpdateLog \"update failed: $($_ | Out-String)\"",
     "  if (Test-Path -LiteralPath $exe) { Start-Process -FilePath $exe }",
     "  exit 1",
