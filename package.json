@@ -1,6 +1,6 @@
 {
   "name": "design-order-manager",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "description": "设计客户管理系统",
   "author": "moshangqingchen",
   "private": true,
@@ -14,6 +14,7 @@
     "dist": "npm run build && electron-builder --publish never",
     "start": "npm run build && electron .",
     "test:data-center": "node scripts/data-center-test.mjs",
+    "test:update-script": "npm run build:electron && node scripts/update-script-test.mjs",
     "test:startup-focus": "node scripts/startup-focus-test.mjs",
     "test:smoke": "node scripts/smoke-test.mjs"
   },
