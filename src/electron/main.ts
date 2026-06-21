@@ -3,6 +3,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from "electron";
 import { OrderDatabase } from "./database";
+import { createUpdateScript } from "./update-script";
 import type { OrderStatus } from "../shared/statuses";
 import type {
   AppUpdateInfo,
@@ -367,25 +368,25 @@ async function scheduleUpdateFromFolder(sourceFolder: string): Promise<AppUpdate
 
   const targetExePath = path.join(updateInfo.targetPath, path.basename(process.execPath));
   const scriptPath = path.join(app.getPath("temp"), `design-order-manager-update-${Date.now()}.ps1`);
-  const script = [
-    "$ErrorActionPreference = 'Stop'",
-    `$source = ${toPowerShellString(updateInfo.sourcePath)}`,
-    `$target = ${toPowerShellString(updateInfo.targetPath)}`,
-    `$exe = ${toPowerShellString(targetExePath)}`,
-    `$pidToWait = ${process.pid}`,
-    "Wait-Process -Id $pidToWait -ErrorAction SilentlyContinue",
-    "Start-Sleep -Milliseconds 800",
-    "Get-ChildItem -LiteralPath $source -Force | ForEach-Object {",
-    "  Copy-Item -LiteralPath $_.FullName -Destination $target -Recurse -Force",
-    "}",
-    "Start-Process -FilePath $exe"
-  ].join("\n");
+  const logPath = path.join(app.getPath("temp"), "design-order-manager-update.log");
+  const script = createUpdateScript({
+    sourcePath: updateInfo.sourcePath,
+    targetPath: updateInfo.targetPath,
+    targetExePath,
+    expectedVersion: updateInfo.sourceVersion,
+    logPath,
+    pidToWait: process.pid
+  });
 
   await fs.promises.writeFile(scriptPath, script, "utf8");
-  const child = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath], {
+  const child = spawn("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath], {
     detached: true,
     stdio: "ignore",
     windowsHide: true
+  });
+  await new Promise<void>((resolve, reject) => {
+    child.once("spawn", resolve);
+    child.once("error", reject);
   });
   child.unref();
 
@@ -503,10 +504,6 @@ async function readPackageVersion(packagePath: string): Promise<string> {
   } catch {
     return "未知版本";
   }
-}
-
-function toPowerShellString(value: string): string {
-  return `'${value.replace(/'/g, "''")}'`;
 }
 
 function isPathSame(left: string, right: string): boolean {
