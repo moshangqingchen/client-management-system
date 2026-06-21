@@ -367,7 +367,9 @@ async function scheduleUpdateFromFolder(sourceFolder: string): Promise<AppUpdate
   await saveUpdateSourcePath(updateInfo.sourcePath).catch(() => undefined);
 
   const targetExePath = path.join(updateInfo.targetPath, path.basename(process.execPath));
-  const scriptPath = path.join(app.getPath("temp"), `design-order-manager-update-${Date.now()}.ps1`);
+  const updateId = Date.now();
+  const scriptPath = path.join(app.getPath("temp"), `design-order-manager-update-${updateId}.ps1`);
+  const readyPath = path.join(app.getPath("temp"), `design-order-manager-update-${updateId}.ready`);
   const logPath = path.join(app.getPath("temp"), "design-order-manager-update.log");
   const script = createUpdateScript({
     sourcePath: updateInfo.sourcePath,
@@ -375,22 +377,61 @@ async function scheduleUpdateFromFolder(sourceFolder: string): Promise<AppUpdate
     targetExePath,
     expectedVersion: updateInfo.sourceVersion,
     logPath,
+    readyPath,
     pidToWait: process.pid
   });
 
   await fs.promises.writeFile(scriptPath, script, "utf8");
-  const child = spawn("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath], {
-    detached: true,
+  const powershellPath = path.join(
+    process.env.SystemRoot || "C:\\Windows",
+    "System32",
+    "WindowsPowerShell",
+    "v1.0",
+    "powershell.exe"
+  );
+  const updaterCommandLine = `"${powershellPath}" -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "${scriptPath}"`;
+  const encodedUpdaterCommandLine = Buffer.from(updaterCommandLine, "utf16le").toString("base64");
+  const launcherScript = [
+    `$commandLine = [System.Text.Encoding]::Unicode.GetString([System.Convert]::FromBase64String('${encodedUpdaterCommandLine}'))`,
+    "$result = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $commandLine }",
+    "if ($result.ReturnValue -ne 0) { exit $result.ReturnValue }"
+  ].join("\n");
+  const encodedLauncherScript = Buffer.from(launcherScript, "utf16le").toString("base64");
+  const child = spawn(powershellPath, ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encodedLauncherScript], {
+    detached: false,
     stdio: "ignore",
     windowsHide: true
   });
   await new Promise<void>((resolve, reject) => {
-    child.once("spawn", resolve);
-    child.once("error", reject);
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(pollTimer);
+      clearTimeout(timeoutTimer);
+      child.removeListener("error", onError);
+      child.removeListener("exit", onExit);
+      if (error) reject(error);
+      else resolve();
+    };
+    const onError = (error: Error) => finish(error);
+    const onExit = (code: number | null) => {
+      if (code !== 0) finish(new Error(`更新程序启动失败（退出码 ${code ?? "未知"}）`));
+    };
+    const pollTimer = setInterval(() => {
+      if (fs.existsSync(readyPath)) finish();
+    }, 50);
+    const timeoutTimer = setTimeout(() => {
+      if (child.exitCode === null) child.kill();
+      finish(new Error("更新程序启动超时，请重试"));
+    }, 5000);
+
+    child.once("error", onError);
+    child.once("exit", onExit);
   });
   child.unref();
 
-  setTimeout(() => app.quit(), 350);
+  setTimeout(() => app.quit(), 100);
 
   return {
     sourcePath: updateInfo.sourcePath,

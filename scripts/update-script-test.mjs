@@ -9,6 +9,7 @@ const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), "design-update-test-"));
 const sourcePath = path.join(testRoot, "新版目录");
 const targetPath = path.join(testRoot, "安装目录");
 const logPath = path.join(testRoot, "更新日志.log");
+const readyPath = path.join(testRoot, "更新脚本.ready");
 const scriptPath = path.join(testRoot, "更新脚本.ps1");
 const packageRelativePath = path.join("resources", "app", "package.json");
 
@@ -25,6 +26,7 @@ try {
     targetExePath: path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "where.exe"),
     expectedVersion: "9.9.9",
     logPath,
+    readyPath,
     pidToWait: 999999
   });
   fs.writeFileSync(scriptPath, script, "utf8");
@@ -44,6 +46,7 @@ try {
   assert.equal(installedPackage.version, "9.9.9");
   assert.equal(fs.readFileSync(path.join(targetPath, "中文文件.txt"), "utf8"), "updated");
   assert.match(updateLog, /update completed version=9\.9\.9/);
+  assert.equal(fs.existsSync(readyPath), false);
   console.log("Update script copied and verified a package through Chinese paths.");
 } finally {
   fs.rmSync(testRoot, { recursive: true, force: true });
