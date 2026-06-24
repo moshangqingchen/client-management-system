@@ -18,6 +18,8 @@ import type {
 let mainWindow: BrowserWindow | null = null;
 let database: OrderDatabase | null = null;
 const appId = "com.moshangqingchen.client-management-system";
+const initialWindowBackgroundColor = "#f8fbf8";
+const revealFallbackMs = 5000;
 
 function writeStartupLog(message: string): void {
   try {
@@ -81,9 +83,10 @@ function createWindow(): void {
     height: 920,
     minWidth: 1180,
     minHeight: 760,
-    show: true,
+    show: false,
+    paintWhenInitiallyHidden: true,
     title: "客户订单管理系统",
-    backgroundColor: "#111315",
+    backgroundColor: initialWindowBackgroundColor,
     icon: getAssetPath("app-icon-design-blue-gpt-image-2.ico"),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -94,7 +97,7 @@ function createWindow(): void {
   });
   writeStartupLog(`createWindow after BrowserWindow visible=${mainWindow.isVisible()}`);
 
-  let revealTimer: ReturnType<typeof setTimeout> | null = setTimeout(showMainWindow, 1500);
+  let revealTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => showMainWindow({ reason: "fallback" }), revealFallbackMs);
   const revealWindow = () => {
     if (revealTimer) {
       clearTimeout(revealTimer);

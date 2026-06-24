@@ -27,4 +27,22 @@ assert.match(
   "second-instance should use forced foreground behavior"
 );
 
+assert.match(
+  mainSource,
+  /show:\s*false/,
+  "main window should stay hidden until the renderer has painted"
+);
+
+assert.match(
+  mainSource,
+  /paintWhenInitiallyHidden:\s*true/,
+  "hidden startup window should still paint before ready-to-show"
+);
+
+assert.match(
+  mainSource,
+  /backgroundColor:\s*initialWindowBackgroundColor/,
+  "startup window should use the light renderer background instead of a black native background"
+);
+
 console.log("Startup focus checks passed");
