@@ -36,11 +36,15 @@ export interface QuickPhrase {
   updatedAt: string;
 }
 
+export type AppUpdateSource = "folder" | "github-release";
+
 export interface AppUpdateResult {
-  sourcePath: string;
+  sourceKind: AppUpdateSource;
+  sourcePath?: string;
   targetPath: string;
   currentVersion: string;
   sourceVersion: string;
+  installerPath?: string;
 }
 
 export interface AppUpdateInfo extends AppUpdateResult {
@@ -48,6 +52,9 @@ export interface AppUpdateInfo extends AppUpdateResult {
   currentBuildTime: string | null;
   sourceBuildTime: string | null;
   releaseNotes: string[];
+  assetName?: string;
+  assetSize?: number;
+  releasePageUrl?: string;
 }
 
 export interface OrderRecord {

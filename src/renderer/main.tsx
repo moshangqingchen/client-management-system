@@ -57,7 +57,8 @@ function createBrowserPreviewOrderApi(): OrderApi {
     exportBackup: unavailable,
     openBackupFolder: unavailable,
     checkAppUpdate: async () => null,
-    updateAppFromFolder: unavailable
+    updateAppFromFolder: unavailable,
+    installRemoteUpdate: unavailable
   };
 }
 

@@ -2930,6 +2930,8 @@ select option {
 
 .trash-panel {
   display: grid;
+  align-content: start;
+  grid-auto-rows: max-content;
   min-height: 0;
   flex: 1;
   gap: 10px;

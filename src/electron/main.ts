@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from "electron";
+import { autoUpdater, type UpdateInfo } from "electron-updater";
 import { OrderDatabase } from "./database";
 import { createUpdateScript } from "./update-script";
 import type { OrderStatus } from "../shared/statuses";
@@ -17,9 +18,14 @@ import type {
 
 let mainWindow: BrowserWindow | null = null;
 let database: OrderDatabase | null = null;
+let autoUpdaterConfigured = false;
+let remoteUpdateInfo: UpdateInfo | null = null;
+let remoteUpdateCheckPromise: Promise<AppUpdateInfo | null> | null = null;
 const appId = "com.moshangqingchen.client-management-system";
 const initialWindowBackgroundColor = "#f8fbf8";
 const revealFallbackMs = 5000;
+const githubUpdateOwner = "moshangqingchen";
+const githubUpdateRepo = "client-management-system";
 
 function writeStartupLog(message: string): void {
   try {
@@ -241,6 +247,9 @@ function registerIpc(): void {
     if (!folder) return null;
     return scheduleUpdateFromFolder(folder);
   });
+  ipcMain.handle("app:install-remote-update", (_event, expectedVersion?: string) =>
+    downloadAndInstallRemoteUpdate(expectedVersion)
+  );
   ipcMain.handle("files:list", () => getDatabase().listFiles());
 
   ipcMain.handle("files:add", async (_event, orderId: string, sourcePaths: string[]) => {
@@ -347,14 +356,45 @@ async function pickUpdateFolder(): Promise<string | null> {
 async function checkAppUpdate(sourceFolder?: string): Promise<AppUpdateInfo | null> {
   if (!app.isPackaged) return null;
 
+  if (!sourceFolder?.trim()) {
+    return checkRemoteAppUpdate();
+  }
+
   const sourcePath = await resolveUpdateSourcePath(sourceFolder);
   if (!sourcePath) return null;
-
   const updateInfo = await getUpdateInfoFromSource(sourcePath);
-  if (sourceFolder?.trim()) {
-    await saveUpdateSourcePath(sourcePath).catch(() => undefined);
-  }
+  await saveUpdateSourcePath(sourcePath).catch(() => undefined);
   return updateInfo;
+}
+
+async function downloadAndInstallRemoteUpdate(expectedVersion?: string): Promise<AppUpdateResult> {
+  if (!app.isPackaged) {
+    throw new Error("本地调试模式不需要应用更新，请直接重新运行开发命令");
+  }
+
+  configureAutoUpdater();
+  let updateInfo = remoteUpdateInfo;
+  if (!updateInfo || (expectedVersion?.trim() && normalizeVersion(updateInfo.version) !== normalizeVersion(expectedVersion))) {
+    const checked = await checkRemoteAppUpdate();
+    if (!checked?.hasUpdate) throw new Error("当前已经是最新版本");
+    updateInfo = remoteUpdateInfo;
+  }
+  if (!updateInfo) throw new Error("未找到可安装的远程更新");
+  if (expectedVersion?.trim() && normalizeVersion(expectedVersion) !== normalizeVersion(updateInfo.version)) {
+    throw new Error("远程版本信息已变化，请重新检查更新");
+  }
+
+  const downloadedFiles = await autoUpdater.downloadUpdate();
+  const installerPath = downloadedFiles[0];
+  autoUpdater.quitAndInstall(true, true);
+
+  return {
+    sourceKind: "github-release",
+    targetPath: path.dirname(process.execPath),
+    currentVersion: app.getVersion(),
+    sourceVersion: updateInfo.version,
+    installerPath
+  };
 }
 
 async function scheduleUpdateFromFolder(sourceFolder: string): Promise<AppUpdateResult> {
@@ -364,10 +404,12 @@ async function scheduleUpdateFromFolder(sourceFolder: string): Promise<AppUpdate
 
   const sourcePath = path.resolve(sourceFolder);
   const updateInfo = await getUpdateInfoFromSource(sourcePath);
-  if (isPathSame(updateInfo.sourcePath, updateInfo.targetPath)) {
+  const updateSourcePath = updateInfo.sourcePath;
+  if (!updateSourcePath) throw new Error("缺少新版目录，请重新选择");
+  if (isPathSame(updateSourcePath, updateInfo.targetPath)) {
     throw new Error("选择的新版目录就是当前程序目录，不需要更新");
   }
-  await saveUpdateSourcePath(updateInfo.sourcePath).catch(() => undefined);
+  await saveUpdateSourcePath(updateSourcePath).catch(() => undefined);
 
   const targetExePath = path.join(updateInfo.targetPath, path.basename(process.execPath));
   const updateId = Date.now();
@@ -375,7 +417,7 @@ async function scheduleUpdateFromFolder(sourceFolder: string): Promise<AppUpdate
   const readyPath = path.join(app.getPath("temp"), `design-order-manager-update-${updateId}.ready`);
   const logPath = path.join(app.getPath("temp"), "design-order-manager-update.log");
   const script = createUpdateScript({
-    sourcePath: updateInfo.sourcePath,
+    sourcePath: updateSourcePath,
     targetPath: updateInfo.targetPath,
     targetExePath,
     expectedVersion: updateInfo.sourceVersion,
@@ -437,11 +479,99 @@ async function scheduleUpdateFromFolder(sourceFolder: string): Promise<AppUpdate
   setTimeout(() => app.quit(), 100);
 
   return {
-    sourcePath: updateInfo.sourcePath,
+    sourceKind: "folder",
+    sourcePath: updateSourcePath,
     targetPath: updateInfo.targetPath,
     currentVersion: updateInfo.currentVersion,
     sourceVersion: updateInfo.sourceVersion
   };
+}
+
+async function checkRemoteAppUpdate(): Promise<AppUpdateInfo | null> {
+  if (remoteUpdateCheckPromise) return remoteUpdateCheckPromise;
+
+  configureAutoUpdater();
+  remoteUpdateCheckPromise = autoUpdater
+    .checkForUpdates()
+    .then(async (result) => {
+      if (!result?.isUpdateAvailable) {
+        remoteUpdateInfo = null;
+        return null;
+      }
+
+      remoteUpdateInfo = result.updateInfo;
+      return toAutoUpdaterInfo(result.updateInfo);
+    })
+    .finally(() => {
+      remoteUpdateCheckPromise = null;
+    });
+
+  return remoteUpdateCheckPromise;
+}
+
+async function toAutoUpdaterInfo(updateInfo: UpdateInfo): Promise<AppUpdateInfo> {
+  const targetPath = path.dirname(process.execPath);
+  const currentExeStats = await fs.promises.stat(process.execPath).catch(() => null);
+  const currentManifest = await readUpdateManifest(targetPath);
+  const primaryFile = updateInfo.files?.[0];
+
+  return {
+    sourceKind: "github-release",
+    targetPath,
+    currentVersion: app.getVersion(),
+    sourceVersion: updateInfo.version,
+    hasUpdate: true,
+    currentBuildTime: currentManifest.buildTime ?? currentExeStats?.mtime.toISOString() ?? null,
+    sourceBuildTime: updateInfo.releaseDate || null,
+    releaseNotes: parseAutoUpdaterReleaseNotes(updateInfo),
+    assetName: primaryFile?.url ? path.basename(primaryFile.url) : undefined,
+    assetSize: primaryFile?.size,
+    releasePageUrl: `https://github.com/${githubUpdateOwner}/${githubUpdateRepo}/releases/latest`
+  };
+}
+
+function configureAutoUpdater(): void {
+  if (autoUpdaterConfigured) return;
+
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = false;
+  autoUpdater.allowDowngrade = false;
+  autoUpdater.logger = {
+    info: (message?: unknown) => writeStartupLog(`updater info ${String(message ?? "")}`),
+    warn: (message?: unknown) => writeStartupLog(`updater warn ${String(message ?? "")}`),
+    error: (message?: unknown) => writeStartupLog(`updater error ${String(message ?? "")}`),
+    debug: (message: string) => writeStartupLog(`updater debug ${message}`)
+  };
+  autoUpdater.on("error", (error) => {
+    writeStartupLog(`updater event error=${error instanceof Error ? error.stack ?? error.message : String(error)}`);
+  });
+  autoUpdaterConfigured = true;
+}
+
+function parseAutoUpdaterReleaseNotes(updateInfo: UpdateInfo): string[] {
+  const notes = updateInfo.releaseNotes;
+  if (Array.isArray(notes)) {
+    const parsedNotes = notes
+      .map((note) => note.note?.trim())
+      .filter((note): note is string => Boolean(note))
+      .slice(0, 12);
+    if (parsedNotes.length > 0) return parsedNotes;
+  }
+
+  if (typeof notes === "string" && notes.trim()) {
+    const parsedNotes = notes
+      .split(/\r?\n/)
+      .map((line) => line.replace(/^#{1,6}\s+/, "").replace(/^[-*]\s+/, "").trim())
+      .filter(Boolean)
+      .slice(0, 12);
+    if (parsedNotes.length > 0) return parsedNotes;
+  }
+
+  return updateInfo.releaseName ? [updateInfo.releaseName] : ["包含最新功能、界面调整和问题修复"];
+}
+
+function normalizeVersion(value: string): string {
+  return value.trim().replace(/^v/i, "").split(/[+-]/)[0].trim();
 }
 
 async function getUpdateInfoFromSource(sourceFolder: string): Promise<AppUpdateInfo> {
@@ -469,6 +599,7 @@ async function getUpdateInfoFromSource(sourceFolder: string): Promise<AppUpdateI
     (sourceVersion !== currentVersion || sourceExeStats.mtimeMs > (currentExeStats?.mtimeMs ?? 0) + 1000);
 
   return {
+    sourceKind: "folder",
     sourcePath,
     targetPath,
     currentVersion,

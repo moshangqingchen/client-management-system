@@ -1046,6 +1046,31 @@ export default function App() {
     }
   }
 
+  async function applyAvailableUpdate(update: AppUpdateInfo) {
+    try {
+      setUpdatingApp(true);
+      if (update.sourceKind === "github-release") {
+        const result = await window.orderApi.installRemoteUpdate(update.sourceVersion);
+        showToast(`正在安装 ${result.sourceVersion}，应用会自动重启`);
+        return;
+      }
+
+      if (!update.sourcePath) {
+        throw new Error("缺少新版目录，请重新检查更新");
+      }
+      const result = await window.orderApi.updateAppFromFolder(update.sourcePath);
+      if (!result) {
+        showToast("已取消更新");
+        setUpdatingApp(false);
+        return;
+      }
+      showToast(`正在更新到 ${result.sourceVersion}，应用会自动重启`);
+    } catch (error) {
+      setUpdatingApp(false);
+      showToast(getErrorMessage(error));
+    }
+  }
+
   function resetQuickPhraseForm() {
     setEditingQuickPhraseId(null);
     setQuickPhraseForm({ title: "", content: "" });
@@ -1658,7 +1683,7 @@ export default function App() {
         <UpdatePrompt
           isUpdating={isUpdatingApp}
           update={availableUpdate}
-          onApply={() => void updateAppFromFolder(availableUpdate.sourcePath)}
+          onApply={() => void applyAvailableUpdate(availableUpdate)}
           onDismiss={() => setAvailableUpdate(null)}
         />
       ) : null}
@@ -1679,6 +1704,10 @@ function UpdatePrompt({
   onDismiss: () => void;
   update: AppUpdateInfo;
 }) {
+  const isRemoteUpdate = update.sourceKind === "github-release";
+  const actionLabel = isRemoteUpdate ? "更新并重启" : "立即更新";
+  const workingLabel = isRemoteUpdate ? "正在下载安装..." : "正在准备...";
+
   return (
     <div className="modal-backdrop" role="presentation">
       <div className="confirm-modal update-modal" role="dialog" aria-modal="true" aria-label="发现新版本">
@@ -1690,8 +1719,15 @@ function UpdatePrompt({
           当前版本 <strong>{update.currentVersion}</strong>，可更新到 <strong>{update.sourceVersion}</strong>。
         </p>
         <div className="update-meta">
+          <span>更新来源：{isRemoteUpdate ? "GitHub Release" : "本地新版目录"}</span>
           <span>当前构建：{update.currentBuildTime ? formatDateTime(update.currentBuildTime) : "未知"}</span>
           <span>新版构建：{update.sourceBuildTime ? formatDateTime(update.sourceBuildTime) : "未知"}</span>
+          {update.assetName ? (
+            <span>
+              安装包：{update.assetName}
+              {update.assetSize ? ` · ${formatBytes(update.assetSize)}` : ""}
+            </span>
+          ) : null}
         </div>
         <div className="update-notes">
           <strong>更新内容</strong>
@@ -1707,7 +1743,7 @@ function UpdatePrompt({
           </button>
           <button className="primary-button" type="button" onClick={onApply} disabled={isUpdating}>
             <RefreshCw size={18} />
-            <span>{isUpdating ? "正在准备..." : "立即更新"}</span>
+            <span>{isUpdating ? workingLabel : actionLabel}</span>
           </button>
         </div>
       </div>
@@ -2887,17 +2923,17 @@ function DataCenterView({
           </div>
           <div>
             <h3>应用更新</h3>
-            <p>有新版打包出来后，选择新版 win-unpacked 文件夹。应用会自动关闭、覆盖当前程序目录并重启。</p>
+            <p>启动时会检查 GitHub Release。也可以选择新版 win-unpacked 文件夹进行本地更新。</p>
           </div>
         </div>
         <button className="secondary-button" type="button" onClick={onUpdateApp} disabled={isUpdatingApp}>
           <RefreshCw size={17} />
-          <span>{isUpdatingApp ? "准备更新..." : "选择新版目录更新"}</span>
+          <span>{isUpdatingApp ? "准备更新..." : "选择本地新版目录"}</span>
         </button>
         <div className="data-update-actions">
           <button className="secondary-button" type="button" onClick={onCheckUpdate} disabled={isCheckingUpdate || isUpdatingApp}>
             <RefreshCw size={16} />
-            <span>{isCheckingUpdate ? "检查中..." : "检查更新"}</span>
+            <span>{isCheckingUpdate ? "检查中..." : "检查远程更新"}</span>
           </button>
         </div>
       </div>

@@ -1,6 +1,6 @@
 {
   "name": "design-order-manager",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "description": "设计客户管理系统",
   "author": "moshangqingchen",
   "private": true,
@@ -19,6 +19,7 @@
     "test:smoke": "node scripts/smoke-test.mjs"
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
@@ -43,6 +44,13 @@
     "directories": {
       "output": "release"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "moshangqingchen",
+        "repo": "client-management-system"
+      }
+    ],
     "files": [
       {
         "from": "dist",
@@ -88,7 +96,7 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "设计客户管理系统",
-      "artifactName": "${productName}-${version}-Setup.${ext}"
+      "artifactName": "design-order-manager-setup-${version}.${ext}"
     }
   }
 }

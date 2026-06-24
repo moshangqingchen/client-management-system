@@ -63,7 +63,9 @@ const api = {
   openBackupFolder: (backupPath: string) => ipcRenderer.invoke("storage:open-backup-folder", backupPath) as Promise<boolean>,
   checkAppUpdate: (sourcePath?: string) => ipcRenderer.invoke("app:check-update", sourcePath) as Promise<AppUpdateInfo | null>,
   updateAppFromFolder: (sourcePath?: string) =>
-    ipcRenderer.invoke("app:update-from-folder", sourcePath) as Promise<AppUpdateResult | null>
+    ipcRenderer.invoke("app:update-from-folder", sourcePath) as Promise<AppUpdateResult | null>,
+  installRemoteUpdate: (expectedVersion?: string) =>
+    ipcRenderer.invoke("app:install-remote-update", expectedVersion) as Promise<AppUpdateResult>
 };
 
 contextBridge.exposeInMainWorld("orderApi", api);
