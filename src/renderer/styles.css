@@ -1082,62 +1082,6 @@ select option {
   width: 100%;
 }
 
-.tracking-item {
-  grid-column: 1 / -1;
-}
-
-.tracking-control {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 34px;
-  gap: 8px;
-  align-items: center;
-}
-
-.tracking-value,
-.tracking-control input {
-  width: 100%;
-  min-width: 0;
-  height: 34px;
-  padding: 0 10px;
-  overflow: hidden;
-  border: 1px solid rgba(67, 214, 197, 0.22);
-  border-radius: 8px;
-  background: rgba(5, 7, 8, 0.32);
-  color: #fff7e6;
-  font-size: 15px;
-  font-weight: 820;
-  text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.tracking-value {
-  cursor: text;
-}
-
-.tracking-value:hover,
-.tracking-control input:focus {
-  border-color: rgba(67, 214, 197, 0.62);
-  outline: 0;
-}
-
-.tracking-copy {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.055);
-  color: var(--teal);
-  cursor: pointer;
-}
-
-.tracking-copy:disabled {
-  cursor: not-allowed;
-  opacity: 0.42;
-}
-
 .drop-zone {
   display: grid;
   place-items: center;
@@ -2171,9 +2115,6 @@ body::before {
 .form-field select,
 .form-field textarea,
 .smart-recognizer textarea,
-.tracking-value,
-.tracking-control input,
-.tracking-copy,
 .file-count {
   border-color: rgba(255, 255, 255, 0.82);
   background:
@@ -2209,8 +2150,7 @@ body::before {
 .icon-button:hover,
 .secondary-button:hover,
 .status-filter-trigger:hover,
-.file-count:hover,
-.tracking-copy:hover {
+.file-count:hover {
   border-color: rgba(66, 207, 197, 0.46);
   background:
     linear-gradient(145deg, rgba(255, 255, 255, 0.94), rgba(218, 252, 247, 0.62)),
@@ -2517,23 +2457,10 @@ select option {
 }
 
 .detail-item strong,
-.tracking-value,
-.tracking-control input,
 .file-main strong,
 .fee-card strong,
 .fee-bar-row strong {
   color: #213137;
-}
-
-.tracking-value,
-.tracking-control input {
-  border-color: rgba(80, 169, 164, 0.2);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.58);
-}
-
-.tracking-copy {
-  border-radius: 12px;
 }
 
 .drop-zone {

@@ -14,7 +14,6 @@ import {
   FolderOpen,
   HardDrive,
   Layers3,
-  MapPin,
   Phone,
   Plus,
   QrCode,
@@ -54,8 +53,6 @@ interface OrderFormState {
   customerNickname: string;
   customerWechat: string;
   customerPhone: string;
-  shippingAddress: string;
-  trackingNumber: string;
   orderTime: string;
 }
 
@@ -75,7 +72,6 @@ interface RecognizedCustomerInfo {
   nickname?: string;
   wechat?: string;
   phone?: string;
-  address?: string;
   designSize?: string;
 }
 
@@ -108,8 +104,6 @@ function createEmptyForm(): OrderFormState {
     customerNickname: "",
     customerWechat: "",
     customerPhone: "",
-    shippingAddress: "",
-    trackingNumber: "",
     orderTime: toDateTimeInputValue(new Date())
   };
 }
@@ -123,8 +117,6 @@ function createFormFromOrder(order: OrderSummary | OrderDetail): OrderFormState 
     customerNickname: order.customerNickname,
     customerWechat: order.customerWechat,
     customerPhone: order.customerPhone,
-    shippingAddress: order.shippingAddress,
-    trackingNumber: order.trackingNumber,
     orderTime: toDateTimeInputValue(new Date(order.orderTime))
   };
 }
@@ -144,14 +136,12 @@ function fillEmptyCustomerFields(form: OrderFormState, customer: CustomerProfile
     ...form,
     customerNickname: form.customerNickname.trim() ? form.customerNickname : customer.customerNickname,
     customerWechat: form.customerWechat.trim() ? form.customerWechat : customer.customerWechat,
-    customerPhone: form.customerPhone.trim() ? form.customerPhone : customer.customerPhone,
-    shippingAddress: form.shippingAddress.trim() ? form.shippingAddress : customer.shippingAddress
+    customerPhone: form.customerPhone.trim() ? form.customerPhone : customer.customerPhone
   };
 
   return next.customerNickname === form.customerNickname &&
     next.customerWechat === form.customerWechat &&
-    next.customerPhone === form.customerPhone &&
-    next.shippingAddress === form.shippingAddress
+    next.customerPhone === form.customerPhone
     ? form
     : next;
 }
@@ -378,8 +368,6 @@ export default function App() {
           order.customerNickname,
           order.customerWechat,
           order.customerPhone,
-          order.shippingAddress,
-          order.trackingNumber,
           order.designSize,
           order.category,
           statusLabel
@@ -402,8 +390,6 @@ export default function App() {
         order.customerNickname,
         order.customerWechat,
         order.customerPhone,
-        order.shippingAddress,
-        order.trackingNumber,
         order.designSize,
         order.category,
         getOrderStatusOption(order.status).label
@@ -444,8 +430,7 @@ export default function App() {
       [
         customer.customerNickname,
         customer.customerWechat,
-        customer.customerPhone,
-        customer.shippingAddress
+        customer.customerPhone
       ]
         .join(" ")
         .toLowerCase()
@@ -701,7 +686,6 @@ export default function App() {
       customerNickname: recognized.nickname ?? current.customerNickname,
       customerWechat: recognized.wechat ?? current.customerWechat,
       customerPhone: recognized.phone ?? current.customerPhone,
-      shippingAddress: recognized.address ?? current.shippingAddress,
       designSize: recognized.designSize ?? current.designSize
     }));
   }
@@ -1134,31 +1118,6 @@ export default function App() {
     showToast(`已复制${label}`);
   }
 
-  async function updateTrackingNumber(value: string) {
-    if (!selectedOrder) return;
-
-    try {
-      const updated = await window.orderApi.updateOrder({
-        id: selectedOrder.id,
-        workOrderNo: selectedOrder.workOrderNo,
-        designFee: selectedOrder.designFee,
-        category: selectedOrder.category,
-        designSize: selectedOrder.designSize,
-        customerNickname: selectedOrder.customerNickname,
-        customerWechat: selectedOrder.customerWechat,
-        customerPhone: selectedOrder.customerPhone,
-        shippingAddress: selectedOrder.shippingAddress,
-        trackingNumber: value,
-        orderTime: selectedOrder.orderTime
-      });
-      await refreshOrders();
-      setSelectedOrder(updated);
-      showToast("快递单号已更新");
-    } catch (error) {
-      showToast(getErrorMessage(error));
-    }
-  }
-
   function showToast(message: string) {
     setToast(message);
     window.setTimeout(() => setToast(null), 2600);
@@ -1483,12 +1442,6 @@ export default function App() {
               <DetailItem label="客户网名" value={selectedOrder.customerNickname} copyLabel="网名" onCopy={copyValue} />
               <DetailItem label="客户微信" value={selectedOrder.customerWechat || "未填写"} copyLabel="微信" onCopy={copyValue} />
               <DetailItem label="手机号" value={selectedOrder.customerPhone || "未填写"} copyLabel="手机号" onCopy={copyValue} />
-              <DetailItem label="收货地址" value={selectedOrder.shippingAddress || "未填写"} copyLabel="地址" onCopy={copyValue} />
-              <TrackingNumberItem
-                onCopy={copyValue}
-                onSave={(value) => void updateTrackingNumber(value)}
-                value={selectedOrder.trackingNumber}
-              />
               <DetailItem label="设计费" value={formatCurrency(selectedOrder.designFee)} />
               <DetailItem label="订单时间" value={formatDateTime(selectedOrder.orderTime)} />
             </div>
@@ -1880,20 +1833,6 @@ function OrderDialog({
                     placeholder="13800138000"
                   />
                 </FormField>
-                <FormField label="收货地址" error={errors.shippingAddress} wide>
-                  <input
-                    value={form.shippingAddress}
-                    onChange={(event) => onFormChange({ ...form, shippingAddress: event.target.value })}
-                    placeholder="省市区街道门牌号"
-                  />
-                </FormField>
-                <FormField label="快递单号" error={errors.trackingNumber} wide>
-                  <input
-                    value={form.trackingNumber}
-                    onChange={(event) => onFormChange({ ...form, trackingNumber: event.target.value })}
-                    placeholder="输入后可在订单详情一键复制"
-                  />
-                </FormField>
               </div>
             </section>
           </div>
@@ -2053,7 +1992,7 @@ function OrdersView({
           <input
             value={query}
             onChange={(event) => onQueryChange(event.target.value)}
-            placeholder="搜索源单号 / 客户 / 微信 / 手机 / 地址 / 尺寸 / 状态"
+            placeholder="搜索源单号 / 客户 / 微信 / 手机 / 尺寸 / 状态"
           />
         </label>
         <label className="select-field">
@@ -2506,7 +2445,7 @@ function CustomersView({
           <input
             value={query}
             onChange={(event) => onQueryChange(event.target.value)}
-            placeholder="搜索客户网名 / 微信 / 手机号 / 地址"
+            placeholder="搜索客户网名 / 微信 / 手机号"
           />
         </label>
       </section>
@@ -2568,7 +2507,6 @@ function CustomersView({
                 <DetailItem label="客户网名" value={selectedCustomer.customerNickname || "未填写"} copyLabel="网名" onCopy={onCopy} />
                 <DetailItem label="客户微信" value={selectedCustomer.customerWechat || "未填写"} copyLabel="微信" onCopy={onCopy} />
                 <DetailItem label="手机号" value={selectedCustomer.customerPhone || "未填写"} copyLabel="手机号" onCopy={onCopy} />
-                <DetailItem label="收货地址" value={selectedCustomer.shippingAddress || "未填写"} copyLabel="地址" onCopy={onCopy} />
                 <DetailItem label="识别依据" value={getCustomerIdentityLabel(selectedCustomer)} />
                 <DetailItem label="订单数" value={`${selectedCustomer.orderCount} 单`} />
                 <DetailItem label="已完稿" value={`${selectedCustomer.completedOrderCount} 单`} />
@@ -2630,7 +2568,7 @@ function TrashView({
           <input
             value={query}
             onChange={(event) => onQueryChange(event.target.value)}
-            placeholder="搜索垃圾箱中的源单号 / 客户 / 微信 / 手机 / 地址 / 尺寸 / 状态"
+            placeholder="搜索垃圾箱中的源单号 / 客户 / 微信 / 手机 / 尺寸 / 状态"
           />
         </label>
       </section>
@@ -3180,69 +3118,6 @@ function DetailItem({
   );
 }
 
-function TrackingNumberItem({
-  onCopy,
-  onSave,
-  value
-}: {
-  onCopy: (label: string, value: string) => void;
-  onSave: (value: string) => void;
-  value: string;
-}) {
-  const [draft, setDraft] = useState(value);
-  const [isEditing, setEditing] = useState(false);
-
-  useEffect(() => {
-    setDraft(value);
-  }, [value]);
-
-  function save() {
-    const nextValue = draft.trim();
-    setEditing(false);
-    if (nextValue !== value) {
-      onSave(nextValue);
-    }
-  }
-
-  return (
-    <div className="detail-item tracking-item">
-      <span>快递单号</span>
-      <div className="tracking-control">
-        {isEditing ? (
-          <input
-            autoFocus
-            value={draft}
-            onBlur={save}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") save();
-              if (event.key === "Escape") {
-                setDraft(value);
-                setEditing(false);
-              }
-            }}
-            placeholder="填写快递单号"
-          />
-        ) : (
-          <button className="tracking-value" type="button" onClick={() => setEditing(true)}>
-            {value || "点击填写快递单号"}
-          </button>
-        )}
-        <button
-          className="tracking-copy"
-          type="button"
-          onClick={() => onCopy("快递单号", value)}
-          disabled={!value.trim()}
-          aria-label="复制快递单号"
-          title="复制快递单号"
-        >
-          <Copy size={15} />
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function FormField({
   label,
   error,
@@ -3344,18 +3219,11 @@ function recognizeCustomerInfo(text: string): RecognizedCustomerInfo {
   const designSize =
     normalized.match(/(?:设计尺寸|成品尺寸|尺寸|规格)[:：\s]*([A-Za-z0-9一-龥.]+(?:\s*[xX×*]\s*[A-Za-z0-9一-龥.]+){1,2}\s*(?:mm|cm|m|px|厘米|毫米)?)/)?.[1] ??
     normalized.match(/\b(A[0-9]|B[0-9]|[0-9]{2,4}\s*[xX×*]\s*[0-9]{2,4}\s*(?:mm|cm|m|px|厘米|毫米)?)\b/i)?.[1];
-  const addressLine =
-    normalized.match(/(?:收货地址|地址)[:：\s]*(.+)/)?.[1] ??
-    lines
-      .map((line) => line.replace(/(?:\+?86[-\s]?)?1[3-9]\d{9}/g, "").trim())
-      .filter((line) => /省|市|区|县|镇|街|路|号|室|小区|村|巷|栋|单元/.test(line))
-      .sort((a, b) => b.length - a.length)[0];
 
   return {
     nickname,
     wechat,
     phone,
-    address: addressLine?.replace(/^[:：\s]+/, "").trim(),
     designSize: designSize?.replace(/\s+/g, "")
   };
 }
