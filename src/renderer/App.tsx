@@ -94,6 +94,7 @@ const boardStatusColumns = ORDER_STATUS_OPTIONS.filter((option) => option.value 
 const contextMenuWidth = 220;
 const contextMenuEstimatedHeight = 326;
 const contextMenuMargin = 12;
+const startupUpdateCheckDelayMs = 8000;
 
 function createEmptyForm(): OrderFormState {
   return {
@@ -223,7 +224,12 @@ export default function App() {
     void refreshCustomers();
     void refreshQuickPhrases();
     void refreshStorageInfo();
-    void checkAppUpdateOnStart();
+
+    const updateTimer = window.setTimeout(() => {
+      void checkAppUpdateOnStart();
+    }, startupUpdateCheckDelayMs);
+
+    return () => window.clearTimeout(updateTimer);
   }, []);
 
   useEffect(() => {

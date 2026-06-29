@@ -24,6 +24,7 @@ let remoteUpdateCheckPromise: Promise<AppUpdateInfo | null> | null = null;
 const appId = "com.moshangqingchen.client-management-system";
 const initialWindowBackgroundColor = "#f8fbf8";
 const revealFallbackMs = 5000;
+const remoteUpdateCheckTimeoutMs = 12000;
 const githubUpdateOwner = "moshangqingchen";
 const githubUpdateRepo = "client-management-system";
 
@@ -491,8 +492,11 @@ async function checkRemoteAppUpdate(): Promise<AppUpdateInfo | null> {
   if (remoteUpdateCheckPromise) return remoteUpdateCheckPromise;
 
   configureAutoUpdater();
-  remoteUpdateCheckPromise = autoUpdater
-    .checkForUpdates()
+  remoteUpdateCheckPromise = withTimeout(
+    autoUpdater.checkForUpdates(),
+    remoteUpdateCheckTimeoutMs,
+    "检查更新超时，请稍后手动重试"
+  )
     .then(async (result) => {
       if (!result?.isUpdateAvailable) {
         remoteUpdateInfo = null;
@@ -507,6 +511,18 @@ async function checkRemoteAppUpdate(): Promise<AppUpdateInfo | null> {
     });
 
   return remoteUpdateCheckPromise;
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+
+  const timeoutPromise = new Promise<T>((_resolve, reject) => {
+    timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeout) clearTimeout(timeout);
+  });
 }
 
 async function toAutoUpdaterInfo(updateInfo: UpdateInfo): Promise<AppUpdateInfo> {
