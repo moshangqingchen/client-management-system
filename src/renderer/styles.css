@@ -3190,3 +3190,82 @@ select option {
     display: none;
   }
 }
+
+/* Desktop performance mode: keep the interface crisp on remote desktops and low-end GPUs. */
+*,
+*::before,
+*::after {
+  animation: none !important;
+  transition-duration: 0s !important;
+  transition-delay: 0s !important;
+}
+
+body::before {
+  display: none;
+}
+
+.app-shell {
+  background: var(--bg);
+}
+
+.primary-button:hover,
+.icon-button:hover,
+.secondary-button:hover,
+.danger-button:hover,
+.quick-filter-strip button:hover,
+.quick-filter-strip button:focus-visible {
+  transform: none;
+}
+
+.sidebar,
+.detail-panel,
+.workspace,
+.order-table-wrap,
+.archive-row,
+.data-hero,
+.data-backup-card,
+.data-path-card,
+.data-stat-card,
+.data-safety-note,
+.fee-card,
+.fee-breakdown,
+.metric,
+.quick-filter-strip,
+.view-switch,
+.board-column,
+.board-card,
+.detail-head,
+.detail-item,
+.drop-zone,
+.file-row,
+.file-empty,
+.status-filter-menu,
+.context-menu,
+.modal,
+.confirm-modal,
+.form-section,
+.wechat-qr-card,
+.qr-placeholder-card,
+.qr-preview,
+.toast,
+.quick-phrase-editor,
+.quick-phrase-list-panel,
+.quick-phrase-card,
+.trash-row,
+.customer-list-panel,
+.customer-detail-panel,
+.customer-card,
+.customer-profile-head,
+.customer-order-row {
+  box-shadow: none;
+}
+
+.storage-dot {
+  box-shadow: none;
+}
+
+.order-row.selected,
+.customer-card.selected,
+.quick-phrase-card.editing {
+  box-shadow: inset 4px 0 0 #42cfc5;
+}
